@@ -16,7 +16,6 @@ import {
 import {
   billingService,
   BillingCycle,
-  generateStandardPixCode,
   ORDER_BUMP_DESCRIPTION,
   ORDER_BUMP_PRICE,
   ORDER_BUMP_TITLE,
@@ -188,7 +187,7 @@ export function CheckoutView({
     setTimeout(() => setCopiedPix(false), 3000);
   };
 
-  // Submissão do Checkout com Fallback Automático para Pix Instantâneo
+  // Submissão do Checkout oficial via Mercado Pago
   const handleCheckoutSubmit = async (e: FormEvent) => {
     e.preventDefault();
 
@@ -233,81 +232,32 @@ export function CheckoutView({
 
       const result = await billingService.createMercadoPagoPayment(payload);
 
+      if (!result.success) {
+        setErrorMessage(result.message || 'Erro ao processar transação no Mercado Pago.');
+        return;
+      }
+
       if (paymentMethod === 'credit_card' && result.paymentMethod === 'checkout_pro' && result.initPoint) {
         // Redireciona para o Checkout Pro oficial do Mercado Pago
         window.location.href = result.initPoint;
         return;
       }
 
-      // Se for Pix ou se houver fallback automático, aciona o modal Pix Instantâneo
-      setPixData({
-        paymentRecordId: result.paymentRecordId || `pix-${Date.now()}`,
-        qrCode: result.qrCode || generateStandardPixCode(totalPrice, selectedPlan),
-        qrCodeBase64: result.qrCodeBase64,
-        amount: result.amount || totalPrice,
-      });
-      setPixModalOpen(true);
-    } catch (err: any) {
-      console.warn('Erro ao conectar com gateway, acionando Checkout Pix Instantâneo:', err);
-      // Nunca exibe erro de Edge Function ausente para o cliente; abre o Pix Instantâneo
-      setPixData({
-        paymentRecordId: `pix-${Date.now()}`,
-        qrCode: generateStandardPixCode(totalPrice, selectedPlan),
-        amount: totalPrice,
-      });
-      setPixModalOpen(true);
-    } finally {
-      setIsProcessing(false);
-    }
-  };
-
-  // Confirmação direta do pagamento e ativação do plano no Supabase
-  const handleConfirmPaymentAndActivate = async () => {
-    try {
-      setIsProcessing(true);
-      const profileId = currentProfile?.id || user?.id;
-      const daysToAdd = billingCycle === 'yearly' ? 365 : 30;
-      const expiresAt = new Date(Date.now() + daysToAdd * 24 * 60 * 60 * 1000).toISOString();
-
-      if (profileId) {
-        // 1. Atualiza diretamente a tabela profiles no Supabase
-        const { error: profileError } = await supabase
-          .from('profiles')
-          .update({
-            plan: selectedPlan,
-            subscription_status: 'active',
-            plan_expires_at: expiresAt,
-            updated_at: new Date().toISOString(),
-          })
-          .eq('id', profileId);
-
-        if (profileError) {
-          console.warn('Erro no update direto, usando fallback upgradePlan:', profileError);
-          await supabaseService.upgradePlan(profileId, selectedPlan, billingCycle);
-        }
-
-        // 2. Registra o pagamento na tabela subscription_payments
-        try {
-          await supabase
-            .from('subscription_payments')
-            .insert({
-              profile_id: profileId,
-              plan_target: selectedPlan,
-              billing_cycle: billingCycle,
-              amount: totalPrice,
-              payment_method: 'pix',
-              status: 'approved',
-              payer_email: user?.email || '',
-              payer_cpf: document.replace(/\D/g, '') || null,
-            });
-        } catch (_) {}
+      // Se for Pix, abre o modal oficial com QR Code real retornado
+      if (result.qrCode) {
+        setPixData({
+          paymentRecordId: result.paymentRecordId || '',
+          qrCode: result.qrCode,
+          qrCodeBase64: result.qrCodeBase64,
+          amount: result.amount || totalPrice,
+        });
+        setPixModalOpen(true);
+      } else {
+        setErrorMessage('Dados de Pix não foram retornados pela API do Mercado Pago.');
       }
-
-      // 3. Exibe confirmação visual de sucesso e redireciona para o dashboard
-      triggerSuccessApproval();
     } catch (err: any) {
-      console.error('Erro na ativação direta do plano:', err);
-      triggerSuccessApproval();
+      console.error('Erro ao conectar com a Edge Function create-mp-payment:', err);
+      setErrorMessage(err.message || 'Erro de comunicação ao gerar cobrança no Mercado Pago.');
     } finally {
       setIsProcessing(false);
     }
@@ -656,14 +606,18 @@ export function CheckoutView({
                 <div className="w-56 h-56 mx-auto bg-white rounded-2xl p-2.5 border border-gray-200 shadow-inner flex items-center justify-center mb-4 overflow-hidden">
                   {pixData.qrCodeBase64 ? (
                     <img
-                      src={`data:image/png;base64,${pixData.qrCodeBase64}`}
-                      alt="QR Code Pix Oficial"
+                      src={
+                        pixData.qrCodeBase64.startsWith('data:')
+                          ? pixData.qrCodeBase64
+                          : `data:image/png;base64,${pixData.qrCodeBase64}`
+                      }
+                      alt="QR Code Pix Oficial Mercado Pago"
                       className="w-full h-full object-contain"
                     />
                   ) : (
                     <img
                       src={`https://api.qrserver.com/v1/create-qr-code/?size=240x240&data=${encodeURIComponent(pixData.qrCode)}`}
-                      alt="QR Code Pix Instantâneo"
+                      alt="QR Code Pix Oficial"
                       className="w-full h-full object-contain"
                     />
                   )}
@@ -702,37 +656,20 @@ export function CheckoutView({
                 </div>
 
                 {/* Status em Tempo Real via Supabase Realtime */}
-                <div className="p-3 rounded-xl bg-emerald-500/10 border border-emerald-500/20 text-emerald-600 text-xs flex items-center justify-center gap-2 mb-4">
-                  <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                  <span>Aguardando confirmação bancária em tempo real...</span>
+                <div className="p-3.5 rounded-2xl bg-emerald-500/10 border border-emerald-500/20 text-emerald-600 dark:text-emerald-400 text-xs flex items-center justify-center gap-2 mb-4">
+                  <Loader2 className="w-4 h-4 animate-spin shrink-0" />
+                  <span className="font-medium text-left">
+                    Aguardando confirmação bancária em tempo real... Seu plano será ativado automaticamente assim que o pagamento for concluído.
+                  </span>
                 </div>
 
-                <div className="space-y-2">
-                  <button
-                    type="button"
-                    disabled={isProcessing}
-                    onClick={handleConfirmPaymentAndActivate}
-                    className="w-full h-12 rounded-2xl bg-emerald-500 hover:bg-emerald-600 active:scale-95 text-white font-bold text-xs shadow-lg cursor-pointer transition-all flex items-center justify-center gap-2"
-                  >
-                    {isProcessing ? (
-                      <div className="flex items-center gap-2">
-                        <Loader2 className="w-4 h-4 animate-spin" />
-                        <span>Confirmando e liberando plano...</span>
-                      </div>
-                    ) : (
-                      <>
-                        <CheckCircle2 className="w-4 h-4" />
-                        <span>Confirmar Pagamento e Ativar Plano</span>
-                      </>
-                    )}
-                  </button>
-
+                <div>
                   <button
                     type="button"
                     onClick={() => setPixModalOpen(false)}
-                    className="w-full py-1 text-center text-[11px] text-gray-400 hover:text-gray-600 dark:hover:text-zinc-300 transition-colors cursor-pointer"
+                    className="w-full py-2.5 rounded-xl border border-gray-200 dark:border-zinc-700 text-gray-600 dark:text-zinc-300 hover:bg-gray-50 dark:hover:bg-zinc-800 text-xs font-semibold transition-all cursor-pointer"
                   >
-                    Cancelar e voltar
+                    Fechar e voltar
                   </button>
                 </div>
               </>

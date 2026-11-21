@@ -108,14 +108,7 @@ export interface CreatePaymentResult {
   initPoint?: string;
   sandboxInitPoint?: string;
   message?: string;
-  isFallback?: boolean;
-}
-
-export function generateStandardPixCode(amount: number, planName: string): string {
-  const formattedAmount = amount.toFixed(2);
-  const randomTxId = Math.random().toString(36).substring(2, 9).toUpperCase();
-  // Formato padrão Pix Copia e Cola EMV Banco Central
-  return `00020126580014BR.GOV.BCB.PIX0136achadoslink.oficial@gmail.com520400005303986540${formattedAmount.length}${formattedAmount}5802BR5920ACHADOSLINK AFILIADOS6009SAO PAULO62170513AL${planName.toUpperCase()}${randomTxId}6304`;
+  rawError?: any;
 }
 
 export const billingService = {
@@ -142,28 +135,20 @@ export const billingService = {
       });
 
       if (error) {
-        console.warn('Edge Function create-mp-payment indisponível ou não implantada. Acionando Checkout Pix Instantâneo:', error);
+        console.error('Erro na resposta da Edge Function create-mp-payment:', error);
         return {
-          success: true,
-          isFallback: true,
-          paymentRecordId: `pix-${Date.now()}`,
-          paymentMethod: 'pix',
-          amount: totalAmount,
-          qrCode: generateStandardPixCode(totalAmount, payload.plan),
-          message: 'Checkout Pix Instantâneo ativado.',
+          success: false,
+          message: error.message || 'Falha ao comunicar com o servidor de pagamentos.',
+          rawError: error,
         };
       }
 
       if (!data || !data.success) {
-        console.warn('Resposta da Edge Function sem sucesso, acionando fallback Pix:', data?.error);
+        console.error('Erro retornado pela API do Mercado Pago:', data);
         return {
-          success: true,
-          isFallback: true,
-          paymentRecordId: `pix-${Date.now()}`,
-          paymentMethod: 'pix',
-          amount: totalAmount,
-          qrCode: generateStandardPixCode(totalAmount, payload.plan),
-          message: 'Checkout Pix Instantâneo ativado.',
+          success: false,
+          message: data?.error || 'Erro ao processar transação no Mercado Pago.',
+          rawError: data,
         };
       }
 
@@ -178,15 +163,11 @@ export const billingService = {
         sandboxInitPoint: data.sandboxInitPoint,
       };
     } catch (err: any) {
-      console.warn('Exceção ao invocar Edge Function, acionando Checkout Pix Instantâneo:', err);
+      console.error('Exceção ao invocar Edge Function create-mp-payment:', err);
       return {
-        success: true,
-        isFallback: true,
-        paymentRecordId: `pix-${Date.now()}`,
-        paymentMethod: 'pix',
-        amount: totalAmount,
-        qrCode: generateStandardPixCode(totalAmount, payload.plan),
-        message: 'Checkout Pix Instantâneo ativado.',
+        success: false,
+        message: err.message || 'Falha de conexão com a Edge Function.',
+        rawError: err,
       };
     }
   },

@@ -131,31 +131,28 @@ serve(async (req: Request) => {
       const lastName = payerName ? payerName.split(' ').slice(1).join(' ') || 'AchadosLink' : 'AchadosLink';
 
       const mpPixPayload: any = {
-        transaction_amount: finalAmount,
-        description: `Assinatura AchadosLink - Plano ${planTarget.toUpperCase()} (${billingCycle === 'yearly' ? 'Anual' : 'Mensal'})`,
+        transaction_amount: Number(finalAmount.toFixed(2)),
+        description: 'Assinatura AchadosLink',
         payment_method_id: 'pix',
         payer: {
           email: payerEmail,
           first_name: firstName,
           last_name: lastName,
+          identification: {
+            type: 'CPF',
+            number: cleanCpf,
+          },
         },
         external_reference: paymentRecord.id,
-        notification_url: notificationUrl,
+        notification_url: 'https://nfkruisgrrpokhmiejas.supabase.co/functions/v1/mp-webhook',
       };
-
-      if (cleanCpf.length === 11) {
-        mpPixPayload.payer.identification = {
-          type: 'CPF',
-          number: cleanCpf,
-        };
-      }
 
       const mpResponse = await fetch('https://api.mercadopago.com/v1/payments', {
         method: 'POST',
         headers: {
           'Authorization': `Bearer ${mpAccessToken}`,
           'Content-Type': 'application/json',
-          'X-Idempotency-Key': paymentRecord.id,
+          'X-Idempotency-Key': crypto.randomUUID(),
         },
         body: JSON.stringify(mpPixPayload),
       });
@@ -173,13 +170,15 @@ serve(async (req: Request) => {
           JSON.stringify({
             error: mpData.message || 'Erro ao gerar cobrança Pix no Mercado Pago.',
             details: mpData.cause || null,
+            mpError: mpData,
           }),
-          { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+          { status: mpResponse.status, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
         );
       }
 
       const qrCode = mpData.point_of_interaction?.transaction_data?.qr_code;
-      const qrCodeBase64 = mpData.point_of_interaction?.transaction_data?.qr_code_base64;
+      const rawBase64 = mpData.point_of_interaction?.transaction_data?.qr_code_base64;
+      const qrCodeBase64 = rawBase64 ? `data:image/png;base64,${rawBase64}` : null;
       const mpPaymentId = String(mpData.id);
 
       // Salva os dados retornados no banco para sincronização
