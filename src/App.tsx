@@ -3,9 +3,12 @@ import {
   ArrowUpDown,
   Heart,
   Lock,
+  LogOut,
   SearchX,
   Settings,
+  Sparkles,
   Store,
+  User,
 } from 'lucide-react';
 import { INITIAL_PRODUCTS, INITIAL_PROFILE } from './data/initialData';
 import {
@@ -32,9 +35,11 @@ import {
   StickyFilterBar,
 } from './components/StickyFilterBar';
 import { ProductCard } from './components/ProductCard';
-import { AdminLoginModal } from './components/AdminLoginModal';
 import { AdminPanel } from './components/AdminPanel';
+import { GoogleAuthModal } from './components/GoogleAuthModal';
+import { OnboardingView } from './components/OnboardingView';
 import { ToastContainer } from './components/ToastContainer';
+import { supabaseService } from './services/supabaseService';
 
 const STORAGE_KEY_PRODUCTS = 'vitrine_achadinhos_products_v1';
 const STORAGE_KEY_PROFILE = 'vitrine_achadinhos_profile_v1';
@@ -52,6 +57,16 @@ function loadFromStorage<T>(key: string, fallback: T): T {
 }
 
 export default function App() {
+  // Supabase Auth & Profile states
+  const [currentUser, setCurrentUser] = useState<any>(null);
+  const [isLoadingAuth, setIsLoadingAuth] = useState(true);
+  const [authModalOpen, setAuthModalOpen] = useState(false);
+  const [authModalReason, setAuthModalReason] = useState<{ title?: string; description?: string }>({});
+
+  // Route state ('storefront' | 'dashboard' | 'onboarding')
+  const [currentRoute, setCurrentRoute] = useState<'storefront' | 'dashboard' | 'onboarding'>('storefront');
+
+  // Core data states
   const [products, setProducts] = useState<Product[]>(() =>
     loadFromStorage<Product[]>(STORAGE_KEY_PRODUCTS, INITIAL_PRODUCTS)
   );
@@ -66,15 +81,8 @@ export default function App() {
   // Public filter & sort states
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedCategory, setSelectedCategory] = useState<string>('Todos');
-  const [selectedStore, setSelectedStore] = useState<'Todas' | StorePlatform>(
-    'Todas'
-  );
+  const [selectedStore, setSelectedStore] = useState<'Todas' | StorePlatform>('Todas');
   const [sortBy, setSortBy] = useState<SortOption>('featured');
-
-  // Admin modal / panel states
-  const [loginModalOpen, setLoginModalOpen] = useState(false);
-  const [isAdminUnlocked, setIsAdminUnlocked] = useState(false);
-  const [adminOpen, setAdminOpen] = useState(false);
 
   // Toast feedback state
   const [toasts, setToasts] = useState<ToastItem[]>([]);
@@ -85,12 +93,98 @@ export default function App() {
       setToasts((prev) => [...prev.slice(-2), { id, message, variant }]);
       window.setTimeout(() => {
         setToasts((prev) => prev.filter((item) => item.id !== id));
-      }, 2800);
+      }, 3000);
     },
     []
   );
 
-  // Apply dynamic theme mode and --accent CSS variables globally
+  // 1. Monitorar Autenticação e Carregar Perfil do Supabase
+  useEffect(() => {
+    let isMounted = true;
+
+    async function initAuth() {
+      try {
+        const user = await supabaseService.getCurrentUser();
+        if (!isMounted) return;
+        setCurrentUser(user);
+
+        const path = window.location.pathname.replace(/^\/+/, '').toLowerCase();
+
+        if (user) {
+          const userProfile = await supabaseService.getProfileByUserId(user.id);
+          if (!isMounted) return;
+
+          if (!userProfile) {
+            // Usuário logado mas sem perfil -> Onboarding obrigatório
+            setCurrentRoute('onboarding');
+          } else {
+            setProfile(userProfile);
+            // Carregar produtos do Supabase
+            const dbProducts = await supabaseService.getProducts(userProfile.id || user.id);
+            if (isMounted && dbProducts.length > 0) {
+              setProducts(dbProducts);
+            }
+
+            if (path === 'dashboard' || path === 'onboarding') {
+              setCurrentRoute('dashboard');
+            }
+          }
+        } else {
+          // Visitante público - verificar se a rota é um slug de criador (ex: /andrezza ou /@andrezza)
+          if (path && path !== 'dashboard' && path !== 'onboarding') {
+            const publicProfile = await supabaseService.getProfileBySlug(path);
+            if (isMounted && publicProfile) {
+              setProfile(publicProfile);
+              const dbProducts = await supabaseService.getProducts(publicProfile.id || '', true);
+              if (isMounted && dbProducts.length > 0) {
+                setProducts(dbProducts);
+              }
+            }
+          } else if (path === 'dashboard') {
+            setAuthModalReason({
+              title: 'Acesse o Painel Gerenciador',
+              description: 'Faça login com sua conta Google para gerenciar seus produtos e vitrine.',
+            });
+            setAuthModalOpen(true);
+          }
+        }
+      } catch (err) {
+        console.error('Erro na inicialização Supabase:', err);
+      } finally {
+        if (isMounted) setIsLoadingAuth(false);
+      }
+    }
+
+    initAuth();
+
+    const { data: authListener } = supabaseService.onAuthStateChange(async (user) => {
+      if (!isMounted) return;
+      setCurrentUser(user);
+
+      if (user) {
+        const userProfile = await supabaseService.getProfileByUserId(user.id);
+        if (!userProfile) {
+          setCurrentRoute('onboarding');
+        } else {
+          setProfile(userProfile);
+          const dbProducts = await supabaseService.getProducts(userProfile.id || user.id);
+          if (dbProducts.length > 0) {
+            setProducts(dbProducts);
+          }
+          if (window.location.pathname.includes('dashboard')) {
+            setCurrentRoute('dashboard');
+          }
+        }
+      }
+    });
+
+    return () => {
+      isMounted = false;
+      authListener?.subscription?.unsubscribe();
+    };
+  }, []);
+
+  // 2. Aplicar Tema e Cores Dinâmicas
   const activeAccentPreset = useMemo(
     () => getAccentPreset(profile.themeConfig.accentColor),
     [profile.themeConfig.accentColor]
@@ -117,38 +211,14 @@ export default function App() {
     }
   }, [profile.themeConfig.mode, activeAccentPreset]);
 
-  // Automatic localStorage sync
+  // 3. Sincronização de Favoritos (LocalStorage sem atrito para o comprador)
   useEffect(() => {
     try {
-      window.localStorage.setItem(
-        STORAGE_KEY_PRODUCTS,
-        JSON.stringify(products)
-      );
-    } catch {
-      // Ignore quota errors silently
-    }
-  }, [products]);
-
-  useEffect(() => {
-    try {
-      window.localStorage.setItem(STORAGE_KEY_PROFILE, JSON.stringify(profile));
-    } catch {
-      // Ignore quota errors silently
-    }
-  }, [profile]);
-
-  useEffect(() => {
-    try {
-      window.localStorage.setItem(
-        STORAGE_KEY_FAVORITES,
-        JSON.stringify(favoriteIds)
-      );
-    } catch {
-      // Ignore quota errors silently
-    }
+      window.localStorage.setItem(STORAGE_KEY_FAVORITES, JSON.stringify(favoriteIds));
+    } catch {}
   }, [favoriteIds]);
 
-  // Dynamic category list derived from products
+  // Categorias dinâmicas
   const dynamicCategories = useMemo(() => {
     const seen = new Set<string>();
     for (const product of products) {
@@ -181,7 +251,7 @@ export default function App() {
     return favoriteIds.filter((id) => productIds.has(id));
   }, [favoriteIds, products]);
 
-  // Filtered and sorted products
+  // Filtragem e ordenação
   const filteredProducts = useMemo(() => {
     const normalizedQuery = normalizeText(searchQuery);
     const codeQuery = normalizedQuery.replace(/^#+/, '');
@@ -248,6 +318,7 @@ export default function App() {
     validFavoriteIds,
   ]);
 
+  // Handlers
   const handleToggleFavorite = (productId: string) => {
     setFavoriteIds((prev) => {
       const exists = prev.includes(productId);
@@ -297,13 +368,33 @@ export default function App() {
     });
   };
 
-  const handleSaveProduct = (product: Product, isEditing: boolean) => {
+  // Disparo de Clique via RPC no Supabase
+  const handleProductOfferClick = (productId: string) => {
+    if (profile.id) {
+      supabaseService.recordProductClick(productId, profile.id, document.referrer);
+    }
+  };
+
+  // Operações CRUD do Gerenciador conectadas ao Supabase
+  const handleSaveProduct = async (product: Product, isEditing: boolean) => {
+    if (currentUser && profile.id) {
+      const res = await supabaseService.saveProduct(product, profile.id);
+      if (!res.success) {
+        notify(res.error || 'Erro ao salvar produto no Supabase.', 'error');
+        return;
+      }
+      if (res.product) {
+        product = res.product;
+      }
+    }
+
     setProducts((prev) => {
       if (isEditing) {
         return prev.map((item) => (item.id === product.id ? product : item));
       }
       return [product, ...prev];
     });
+
     notify(
       isEditing
         ? `Produto ${displayCode(product.code)} atualizado!`
@@ -312,7 +403,10 @@ export default function App() {
     );
   };
 
-  const handleDeleteProduct = (productId: string) => {
+  const handleDeleteProduct = async (productId: string) => {
+    if (currentUser && profile.id) {
+      await supabaseService.deleteProduct(productId);
+    }
     setProducts((prev) => prev.filter((item) => item.id !== productId));
     setFavoriteIds((prev) => prev.filter((id) => id !== productId));
     notify('Produto removido da vitrine.');
@@ -329,25 +423,28 @@ export default function App() {
     });
   };
 
-  const handleUpdateProfile = (nextProfile: ProfileConfig) => {
+  const handleUpdateProfile = async (nextProfile: ProfileConfig) => {
     setProfile(nextProfile);
-    notify('Perfil, tema e cupom atualizados!', 'success');
+    if (currentUser && nextProfile.id) {
+      try {
+        await supabaseService.updateProfile(nextProfile.id, nextProfile);
+        notify('Perfil e configurações salvos no Supabase!', 'success');
+      } catch (err: any) {
+        notify('Erro ao sincronizar com Supabase: ' + err.message, 'error');
+      }
+    } else {
+      notify('Perfil e tema atualizados localmente!', 'success');
+    }
   };
 
-  const handleImportBackup = (data: {
-    profile?: ProfileConfig;
-    products: Product[];
-  }) => {
+  const handleImportBackup = (data: { profile?: ProfileConfig; products: Product[] }) => {
     setProducts(data.products);
     if (data.profile) {
       setProfile(hydrateProfile(data.profile, INITIAL_PROFILE));
     }
     setSelectedCategory('Todos');
     setSelectedStore('Todas');
-    notify(
-      `Backup importado com ${data.products.length} produto(s)!`,
-      'success'
-    );
+    notify(`Backup importado com ${data.products.length} produto(s)!`, 'success');
   };
 
   const handleResetDefaults = () => {
@@ -358,22 +455,8 @@ export default function App() {
     setSelectedStore('Todas');
     setSearchQuery('');
     setSortBy('featured');
-    notify('Vitrine restaurada para o visual e produtos iniciais.', 'success');
+    notify('Vitrine restaurada para o padrão inicial.', 'success');
   };
-
-  const handleOpenAdminTrigger = () => {
-    if (isAdminUnlocked) {
-      setAdminOpen(true);
-    } else {
-      setLoginModalOpen(true);
-    }
-  };
-
-  const hasActiveFilters =
-    searchQuery.trim() !== '' ||
-    selectedCategory !== 'Todos' ||
-    selectedStore !== 'Todas' ||
-    sortBy !== 'featured';
 
   const handleClearFilters = () => {
     setSearchQuery('');
@@ -382,19 +465,65 @@ export default function App() {
     setSortBy('featured');
   };
 
+  const handleOpenDashboardTrigger = () => {
+    if (currentUser) {
+      setCurrentRoute('dashboard');
+    } else {
+      setAuthModalReason({
+        title: 'Acesse o Painel Gerenciador',
+        description: 'Faça login com sua conta Google para gerenciar sua vitrine de afiliados.',
+      });
+      setAuthModalOpen(true);
+    }
+  };
+
+  const handleLogout = async () => {
+    try {
+      await supabaseService.signOut();
+      setCurrentUser(null);
+      setCurrentRoute('storefront');
+      notify('Sessão encerrada com sucesso.');
+    } catch (err) {
+      console.error(err);
+    }
+  };
+
   const isListLayout = profile.themeConfig.layoutStyle === 'list';
+  const hasActiveFilters =
+    searchQuery.trim() !== '' ||
+    selectedCategory !== 'Todos' ||
+    selectedStore !== 'Todas' ||
+    sortBy !== 'featured';
+
+  // Verifica se a vitrine atual deve exibir a marca d'água no rodapé
+  const isFreePlan = (profile.plan === 'free' || !profile.plan) && !profile.is_master_admin;
+
+  // Rota de Onboarding (Novo Criador pós-Google OAuth)
+  if (currentRoute === 'onboarding' && currentUser) {
+    return (
+      <OnboardingView
+        user={currentUser}
+        onProfileCreated={(newProfile) => {
+          setProfile(newProfile);
+          setCurrentRoute('dashboard');
+          notify('Vitrine criada com sucesso! Bem-vindo ao painel.', 'success');
+        }}
+        onCancel={() => setCurrentRoute('storefront')}
+      />
+    );
+  }
 
   return (
     <div
       data-theme={profile.themeConfig.mode}
-      className="min-h-screen pt-2.5 sm:py-4 transition-colors"
+      className="min-h-screen pt-2.5 sm:py-4 transition-colors flex flex-col justify-between"
       style={{
         backgroundColor: 'var(--bg-page)',
         color: 'var(--text-primary)',
       }}
     >
       {/* Discreet Top Theme Preview Bar (visible on public storefront) */}
-      {!adminOpen && (
+      {currentRoute === 'storefront' && (
         <ThemePreviewBar
           themeConfig={profile.themeConfig}
           couponEnabled={Boolean(profile.coupon?.enabled)}
@@ -405,14 +534,14 @@ export default function App() {
 
       {/* Centered 640px Mobile-First App Shell */}
       <div
-        className="w-full max-w-[640px] mx-auto min-h-screen sm:min-h-[calc(100vh-5.5rem)] sm:rounded-[28px] overflow-x-clip flex flex-col transition-colors"
+        className="w-full max-w-[640px] mx-auto min-h-screen sm:min-h-[calc(100vh-5.5rem)] sm:rounded-[28px] overflow-x-clip flex flex-col transition-colors mb-auto"
         style={{
           backgroundColor: 'var(--bg-shell)',
           border: '1px solid var(--border-subtle)',
           boxShadow: 'var(--shadow-shell)',
         }}
       >
-        {adminOpen ? (
+        {currentRoute === 'dashboard' ? (
           <AdminPanel
             products={products}
             profile={profile}
@@ -422,12 +551,8 @@ export default function App() {
             onUpdateProfile={handleUpdateProfile}
             onImportBackup={handleImportBackup}
             onResetDefaults={handleResetDefaults}
-            onBackToStore={() => setAdminOpen(false)}
-            onLogout={() => {
-              setIsAdminUnlocked(false);
-              setAdminOpen(false);
-              notify('Sessão do gerenciador bloqueada.');
-            }}
+            onBackToStore={() => setCurrentRoute('storefront')}
+            onLogout={handleLogout}
             onNotify={notify}
           />
         ) : (
@@ -472,9 +597,7 @@ export default function App() {
                       aria-label="Filtrar por loja"
                       value={selectedStore}
                       onChange={(e) =>
-                        setSelectedStore(
-                          e.target.value as 'Todas' | StorePlatform
-                        )
+                        setSelectedStore(e.target.value as 'Todas' | StorePlatform)
                       }
                       className="accent-focus h-8 pl-7 pr-6 rounded-lg text-[11.5px] font-semibold focus:outline-none cursor-pointer"
                       style={{
@@ -538,6 +661,7 @@ export default function App() {
                       isFavorite={validFavoriteIds.includes(product.id)}
                       onToggleFavorite={handleToggleFavorite}
                       onCopyCode={handleCopyCode}
+                      onProductClick={handleProductOfferClick}
                     />
                   ))}
                 </section>
@@ -585,7 +709,7 @@ export default function App() {
               )}
             </main>
 
-            {/* 5. Discreet Footer with Admin Lock/Settings Trigger */}
+            {/* 5. Footer with Admin / Google Login Trigger */}
             <footer
               className="mt-auto px-4 py-5 flex items-center justify-between gap-3 transition-colors"
               style={{
@@ -611,33 +735,56 @@ export default function App() {
 
               <button
                 type="button"
-                onClick={handleOpenAdminTrigger}
-                aria-label="Abrir modo gerenciador"
-                className="inline-flex items-center gap-1.5 h-8 px-2.5 rounded-lg text-[11.5px] font-medium transition-colors whitespace-nowrap shrink-0 hover:opacity-80"
+                onClick={handleOpenDashboardTrigger}
+                aria-label="Abrir modo gerenciador ou login com Google"
+                className="inline-flex items-center gap-1.5 h-8 px-2.5 rounded-lg text-[11.5px] font-medium transition-colors whitespace-nowrap shrink-0 hover:opacity-80 cursor-pointer"
                 style={{ color: 'var(--text-muted)' }}
               >
-                {isAdminUnlocked ? (
-                  <Settings className="w-3.5 h-3.5" aria-hidden="true" />
+                {currentUser ? (
+                  <>
+                    <Settings className="w-3.5 h-3.5" aria-hidden="true" />
+                    <span>Painel ({profile.plan === 'scale' || profile.is_master_admin ? 'Scale' : profile.plan === 'pro' ? 'Pro' : 'Grátis'})</span>
+                  </>
                 ) : (
-                  <Lock className="w-3.5 h-3.5" aria-hidden="true" />
+                  <>
+                    <Lock className="w-3.5 h-3.5" aria-hidden="true" />
+                    <span>Gerenciador</span>
+                  </>
                 )}
-                <span>{isAdminUnlocked ? 'Gerenciador' : 'Admin'}</span>
               </button>
             </footer>
+
+            {/* 6. Marca d'água do Plano Free (Removida nos planos Pro e Scale) */}
+            {isFreePlan && (
+              <div
+                className="py-2.5 px-4 text-center border-t border-gray-200/60 dark:border-zinc-800/80 bg-black/[0.015] dark:bg-white/[0.015]"
+              >
+                <button
+                  type="button"
+                  onClick={() => {
+                    setAuthModalReason({
+                      title: 'Crie sua Vitrine de Afiliados Grátis',
+                      description: 'Tenha seu link de bio com busca por código de vídeo em menos de 2 minutos com sua conta Google!',
+                    });
+                    setAuthModalOpen(true);
+                  }}
+                  className="inline-flex items-center gap-1.5 text-[11px] font-semibold text-gray-500 hover:text-[#EE4D2D] dark:text-zinc-400 dark:hover:text-[#EE4D2D] transition-colors cursor-pointer"
+                >
+                  <Sparkles className="w-3.5 h-3.5 text-[#EE4D2D]" />
+                  <span>Feito com <strong>AchadosLink</strong> — Crie sua vitrine grátis com Google</span>
+                </button>
+              </div>
+            )}
           </>
         )}
       </div>
 
-      {/* Admin Login Modal */}
-      <AdminLoginModal
-        isOpen={loginModalOpen}
-        onClose={() => setLoginModalOpen(false)}
-        onSuccess={() => {
-          setLoginModalOpen(false);
-          setIsAdminUnlocked(true);
-          setAdminOpen(true);
-          notify('Bem-vindo ao Painel Gerenciador!', 'success');
-        }}
+      {/* Modal de Autenticação com Google */}
+      <GoogleAuthModal
+        isOpen={authModalOpen}
+        onClose={() => setAuthModalOpen(false)}
+        title={authModalReason.title}
+        description={authModalReason.description}
       />
 
       {/* Non-blocking Toast Notifications */}

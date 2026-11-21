@@ -5,6 +5,8 @@ export type StorePlatform =
   | 'Hotmart'
   | 'Cakto';
 
+export type SaaSSubscriptionPlan = 'free' | 'pro' | 'scale';
+
 export interface Product {
   id: string;
   code: string; // Stored without '#', e.g. "001"
@@ -15,6 +17,13 @@ export interface Product {
   currentPrice: number;
   imageUrl: string;
   affiliateUrl: string;
+  profile_id?: string;
+  category_id?: string | null;
+  coupon_code?: string;
+  is_featured?: boolean;
+  clicks_count?: number;
+  active?: boolean;
+  created_at?: string;
 }
 
 export type SocialNetworkKey = 'tiktok' | 'instagram' | 'whatsapp';
@@ -50,12 +59,38 @@ export interface CouponConfig {
 }
 
 export interface ProfileConfig {
-  handle: string;
+  id?: string;
+  email?: string;
+  slug?: string;
+  handle: string; // Ex: @andrezza
+  display_name?: string;
   bio: string;
   avatarUrl: string;
+  banner_color?: string;
   themeConfig: ThemeConfig;
   coupon?: CouponConfig;
   socials: SocialLinkConfig[];
+  plan?: SaaSSubscriptionPlan;
+  is_master_admin?: boolean;
+  subscription_status?: string;
+  whatsapp_vip_url?: string;
+  pixel_meta?: string;
+  pixel_tiktok?: string;
+}
+
+export interface CategoryItem {
+  id: string;
+  profile_id: string;
+  name: string;
+  sort_order: number;
+}
+
+export interface ProductClickItem {
+  id: string;
+  product_id: string;
+  profile_id: string;
+  referrer?: string | null;
+  clicked_at: string;
 }
 
 export type SortOption =

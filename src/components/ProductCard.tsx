@@ -16,6 +16,7 @@ interface ProductCardProps {
   isFavorite?: boolean;
   onToggleFavorite?: (productId: string) => void;
   onCopyCode?: (code: string) => void;
+  onProductClick?: (productId: string) => void;
   isPreview?: boolean;
 }
 
@@ -26,6 +27,7 @@ export function ProductCard({
   isFavorite = false,
   onToggleFavorite,
   onCopyCode,
+  onProductClick,
   isPreview = false,
 }: ProductCardProps) {
   const [imageError, setImageError] = useState(false);
@@ -238,6 +240,8 @@ export function ProductCard({
             onClick={(e) => {
               if (isPreview || safeOfferUrl === '#') {
                 e.preventDefault();
+              } else if (onProductClick) {
+                onProductClick(product.id);
               }
             }}
             className="accent-btn flex-1 h-9 px-3 rounded-xl text-xs font-semibold flex items-center justify-center gap-1.5 shadow-xs transition-all active:scale-[0.98] whitespace-nowrap"

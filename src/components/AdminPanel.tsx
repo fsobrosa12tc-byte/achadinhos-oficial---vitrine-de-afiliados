@@ -50,7 +50,12 @@ import {
 import { ProductCard } from './ProductCard';
 import { ProfileHeader } from './ProfileHeader';
 
-type AdminTab = 'products' | 'profile' | 'export';
+import { BarChart3, Sparkles } from 'lucide-react';
+import { AnalyticsView } from './AnalyticsView';
+import { PlanUpgradeModal } from './PlanUpgradeModal';
+import { supabaseService } from '../services/supabaseService';
+
+type AdminTab = 'products' | 'profile' | 'analytics' | 'export';
 
 interface AdminPanelProps {
   products: Product[];
@@ -113,6 +118,11 @@ export function AdminPanel({
   onNotify,
 }: AdminPanelProps) {
   const [activeTab, setActiveTab] = useState<AdminTab>('products');
+  const [upgradeModalOpen, setUpgradeModalOpen] = useState(false);
+  const [upgradeReason, setUpgradeReason] = useState<string | undefined>(undefined);
+  const [uploadingImage, setUploadingImage] = useState(false);
+
+  const isFreePlan = (profile.plan === 'free' || !profile.plan) && !profile.is_master_admin;
 
   // Product form state
   const [editingId, setEditingId] = useState<string | null>(null);
@@ -121,6 +131,22 @@ export function AdminPanel({
   );
   const [formError, setFormError] = useState('');
   const [pendingDeleteId, setPendingDeleteId] = useState<string | null>(null);
+
+  const handleImageFileUpload = async (e: ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    try {
+      setUploadingImage(true);
+      const publicUrl = await supabaseService.uploadImage(file, 'products');
+      setForm((prev) => ({ ...prev, imageUrl: publicUrl }));
+      onNotify('Imagem enviada com sucesso para o Supabase Storage!', 'success');
+    } catch (err: any) {
+      console.error(err);
+      onNotify('Erro ao fazer upload da imagem: ' + (err.message || 'Falha no Storage'), 'error');
+    } finally {
+      setUploadingImage(false);
+    }
+  };
 
   // Profile form state (kept in sync when profile changes externally)
   const [profileDraft, setProfileDraft] = useState<ProfileConfig>(profile);
@@ -203,6 +229,13 @@ export function AdminPanel({
 
   const handleProductSubmit = (e: FormEvent) => {
     e.preventDefault();
+
+    if (!editingId && isFreePlan && products.length >= 15) {
+      setUpgradeReason('Você atingiu o limite de 15 produtos ativos do Plano Free. Faça upgrade para o Plano Pro ou Scale para cadastrar produtos ilimitados!');
+      setUpgradeModalOpen(true);
+      return;
+    }
+
     const normalizedCode = normalizeCodeInput(form.code);
     const title = form.title.trim();
     const category = form.category.trim();
@@ -392,12 +425,40 @@ export function AdminPanel({
             <span>Ver Vitrine</span>
           </button>
 
-          <span
-            className="text-xs font-bold truncate"
-            style={{ color: 'var(--text-primary)' }}
-          >
-            Painel Gerenciador
-          </span>
+          <div className="flex items-center gap-1.5 truncate">
+            <span
+              className="text-xs font-bold truncate"
+              style={{ color: 'var(--text-primary)' }}
+            >
+              Painel
+            </span>
+            <button
+              type="button"
+              onClick={() => {
+                setUpgradeReason(undefined);
+                setUpgradeModalOpen(true);
+              }}
+              className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[10.5px] font-bold transition-all shadow-xs active:scale-95 cursor-pointer"
+              style={
+                profile.is_master_admin || profile.plan === 'scale'
+                  ? { backgroundColor: '#F59E0B22', color: '#D97706', border: '1px solid #F59E0B44' }
+                  : profile.plan === 'pro'
+                    ? { backgroundColor: '#8B5CF622', color: '#7C3AED', border: '1px solid #8B5CF644' }
+                    : { backgroundColor: '#10B98122', color: '#059669', border: '1px solid #10B98144' }
+              }
+            >
+              <Crown className="w-3 h-3" />
+              <span>
+                {profile.is_master_admin
+                  ? 'Master Scale'
+                  : profile.plan === 'scale'
+                    ? 'Scale'
+                    : profile.plan === 'pro'
+                      ? 'Pro'
+                      : 'Starter (15)'}
+              </span>
+            </button>
+          </div>
 
           <button
             type="button"
@@ -407,7 +468,7 @@ export function AdminPanel({
             style={{ color: 'var(--text-muted)' }}
           >
             <LogOut className="w-3.5 h-3.5" />
-            <span>Bloquear</span>
+            <span>Sair</span>
           </button>
         </div>
 
@@ -415,7 +476,7 @@ export function AdminPanel({
         <div
           role="tablist"
           aria-label="Seções do painel gerenciador"
-          className="mt-2.5 grid grid-cols-3 gap-1 p-1 rounded-xl"
+          className="mt-2.5 grid grid-cols-4 gap-1 p-1 rounded-xl"
           style={{ backgroundColor: 'var(--bg-surface-muted)' }}
         >
           <button
@@ -423,7 +484,7 @@ export function AdminPanel({
             role="tab"
             aria-selected={activeTab === 'products'}
             onClick={() => setActiveTab('products')}
-            className="h-8 rounded-lg text-xs font-semibold flex items-center justify-center gap-1.5 transition-all whitespace-nowrap"
+            className="h-8 rounded-lg text-xs font-semibold flex items-center justify-center gap-1 transition-all whitespace-nowrap"
             style={
               activeTab === 'products'
                 ? {
@@ -446,7 +507,7 @@ export function AdminPanel({
               setProfileDraft(profile);
               setActiveTab('profile');
             }}
-            className="h-8 rounded-lg text-xs font-semibold flex items-center justify-center gap-1.5 transition-all whitespace-nowrap"
+            className="h-8 rounded-lg text-xs font-semibold flex items-center justify-center gap-1 transition-all whitespace-nowrap"
             style={
               activeTab === 'profile'
                 ? {
@@ -458,7 +519,32 @@ export function AdminPanel({
             }
           >
             <UserCircle2 className="w-3.5 h-3.5 shrink-0" />
-            <span>Perfil & Tema</span>
+            <span>Perfil</span>
+          </button>
+
+          <button
+            type="button"
+            role="tab"
+            aria-selected={activeTab === 'analytics'}
+            onClick={() => setActiveTab('analytics')}
+            className="h-8 rounded-lg text-xs font-semibold flex items-center justify-center gap-1 transition-all whitespace-nowrap relative"
+            style={
+              activeTab === 'analytics'
+                ? {
+                    backgroundColor: 'var(--bg-surface)',
+                    color: 'var(--accent)',
+                    boxShadow: '0 1px 3px rgba(0,0,0,0.1)',
+                  }
+                : { color: 'var(--text-secondary)' }
+            }
+          >
+            <BarChart3 className="w-3.5 h-3.5 shrink-0" />
+            <span>Analytics</span>
+            {isFreePlan && (
+              <span className="text-[8px] font-black uppercase px-1 py-0.2 rounded bg-amber-500/20 text-amber-600 dark:text-amber-400">
+                PRO
+              </span>
+            )}
           </button>
 
           <button
@@ -466,7 +552,7 @@ export function AdminPanel({
             role="tab"
             aria-selected={activeTab === 'export'}
             onClick={() => setActiveTab('export')}
-            className="h-8 rounded-lg text-xs font-semibold flex items-center justify-center gap-1.5 transition-all whitespace-nowrap"
+            className="h-8 rounded-lg text-xs font-semibold flex items-center justify-center gap-1 transition-all whitespace-nowrap"
             style={
               activeTab === 'export'
                 ? {
@@ -488,6 +574,35 @@ export function AdminPanel({
         {/* TAB 1: PRODUCTS */}
         {activeTab === 'products' && (
           <>
+            {isFreePlan && (
+              <div className="p-3.5 rounded-2xl bg-amber-500/10 border border-amber-500/20 text-xs flex flex-wrap items-center justify-between gap-2.5">
+                <div>
+                  <div className="flex items-center gap-1.5 font-bold text-amber-700 dark:text-amber-300">
+                    <Sparkles className="w-3.5 h-3.5 text-amber-500" />
+                    <span>Plano Starter: {products.length} de 15 produtos ativos</span>
+                  </div>
+                  <div className="w-48 sm:w-64 h-1.5 bg-amber-200 dark:bg-amber-950 rounded-full mt-1.5 overflow-hidden">
+                    <div
+                      className={`h-full rounded-full transition-all ${
+                        products.length >= 15 ? 'bg-red-500' : 'bg-[#EE4D2D]'
+                      }`}
+                      style={{ width: `${Math.min(100, (products.length / 15) * 100)}%` }}
+                    />
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setUpgradeReason('Desbloqueie produtos ilimitados assinando o Plano Pro ou Scale!');
+                    setUpgradeModalOpen(true);
+                  }}
+                  className="px-3 py-1.5 rounded-xl bg-[#EE4D2D] hover:bg-[#D93D1E] text-white font-bold text-[11px] transition-all shadow-xs active:scale-95 cursor-pointer"
+                >
+                  Liberar Ilimitado
+                </button>
+              </div>
+            )}
+
             <section className="card-surface rounded-2xl p-4">
               <div className="flex items-center justify-between gap-2 mb-3.5">
                 <div>
@@ -688,12 +803,25 @@ export function AdminPanel({
                   </div>
 
                   <div>
-                    <label
-                      className="block text-[11px] font-semibold mb-1"
-                      style={{ color: 'var(--text-secondary)' }}
-                    >
-                      URL da Imagem
-                    </label>
+                    <div className="flex items-center justify-between mb-1">
+                      <label
+                        className="block text-[11px] font-semibold"
+                        style={{ color: 'var(--text-secondary)' }}
+                      >
+                        URL da Imagem ou Upload
+                      </label>
+                      <label className="text-[11px] font-semibold text-[#EE4D2D] hover:underline cursor-pointer flex items-center gap-1">
+                        <Upload className="w-3 h-3" />
+                        <span>{uploadingImage ? 'Enviando ao Supabase...' : 'Upload de Foto'}</span>
+                        <input
+                          type="file"
+                          accept="image/*"
+                          className="hidden"
+                          disabled={uploadingImage}
+                          onChange={handleImageFileUpload}
+                        />
+                      </label>
+                    </div>
                     <input
                       type="url"
                       value={form.imageUrl}
@@ -703,7 +831,7 @@ export function AdminPanel({
                           imageUrl: e.target.value,
                         }))
                       }
-                      placeholder="https://... (cole o link direto da foto)"
+                      placeholder="https://... ou use o botão Upload de Foto acima"
                       style={inputStyle}
                       className="accent-focus w-full h-10 px-3 rounded-xl text-sm focus:outline-none"
                     />
@@ -1039,27 +1167,34 @@ export function AdminPanel({
                   <div className="grid grid-cols-3 gap-2">
                     {(
                       [
-                        { value: 'light', label: 'Claro', Icon: Sun },
-                        { value: 'dark', label: 'Escuro', Icon: Moon },
-                        { value: 'luxury', label: 'Luxury', Icon: Crown },
+                        { value: 'light', label: 'Claro', Icon: Sun, isPro: false },
+                        { value: 'dark', label: 'Escuro', Icon: Moon, isPro: true },
+                        { value: 'luxury', label: 'Luxury', Icon: Crown, isPro: true },
                       ] as {
                         value: ThemeMode;
                         label: string;
                         Icon: typeof Sun;
+                        isPro: boolean;
                       }[]
-                    ).map(({ value, label, Icon }) => {
+                    ).map(({ value, label, Icon, isPro }) => {
                       const active = profileDraft.themeConfig.mode === value;
+                      const isLocked = isFreePlan && isPro;
                       return (
                         <button
                           key={value}
                           type="button"
-                          onClick={() =>
+                          onClick={() => {
+                            if (isLocked) {
+                              setUpgradeReason(`O tema ${label} é exclusivo para assinantes dos planos PRO e SCALE.`);
+                              setUpgradeModalOpen(true);
+                              return;
+                            }
                             setProfileDraft((prev) => ({
                               ...prev,
                               themeConfig: { ...prev.themeConfig, mode: value },
-                            }))
-                          }
-                          className="h-10 rounded-xl text-xs font-semibold flex items-center justify-center gap-1.5 transition-all"
+                            }));
+                          }}
+                          className="h-10 rounded-xl text-xs font-semibold flex items-center justify-center gap-1.5 transition-all relative"
                           style={
                             active
                               ? {
@@ -1076,6 +1211,11 @@ export function AdminPanel({
                         >
                           <Icon className="w-3.5 h-3.5" />
                           <span>{label}</span>
+                          {isLocked && (
+                            <span className="absolute top-1 right-1 text-[8px] font-black uppercase px-1 py-0.2 rounded bg-amber-500/20 text-amber-600">
+                              PRO
+                            </span>
+                          )}
                         </button>
                       );
                     })}
@@ -1149,34 +1289,43 @@ export function AdminPanel({
                           value: 'grid',
                           label: 'Grade (2/3 colunas)',
                           Icon: LayoutGrid,
+                          isPro: false,
                         },
                         {
                           value: 'list',
                           label: 'Lista Horizontal',
                           Icon: List,
+                          isPro: true,
                         },
                       ] as {
                         value: LayoutStyle;
                         label: string;
                         Icon: typeof LayoutGrid;
+                        isPro: boolean;
                       }[]
-                    ).map(({ value, label, Icon }) => {
+                    ).map(({ value, label, Icon, isPro }) => {
                       const active =
                         profileDraft.themeConfig.layoutStyle === value;
+                      const isLocked = isFreePlan && isPro;
                       return (
                         <button
                           key={value}
                           type="button"
-                          onClick={() =>
+                          onClick={() => {
+                            if (isLocked) {
+                              setUpgradeReason('O layout em Lista Horizontal é exclusivo para assinantes dos planos PRO e SCALE.');
+                              setUpgradeModalOpen(true);
+                              return;
+                            }
                             setProfileDraft((prev) => ({
                               ...prev,
                               themeConfig: {
                                 ...prev.themeConfig,
                                 layoutStyle: value,
                               },
-                            }))
-                          }
-                          className="h-10 rounded-xl text-xs font-semibold flex items-center justify-center gap-1.5 transition-all"
+                            }));
+                          }}
+                          className="h-10 rounded-xl text-xs font-semibold flex items-center justify-center gap-1.5 transition-all relative"
                           style={
                             active
                               ? {
@@ -1193,6 +1342,11 @@ export function AdminPanel({
                         >
                           <Icon className="w-3.5 h-3.5" />
                           <span>{label}</span>
+                          {isLocked && (
+                            <span className="absolute top-1 right-1 text-[8px] font-black uppercase px-1 py-0.2 rounded bg-amber-500/20 text-amber-600">
+                              PRO
+                            </span>
+                          )}
                         </button>
                       );
                     })}
@@ -1447,18 +1601,90 @@ export function AdminPanel({
                 </div>
               </div>
 
+                {/* Pixels & WhatsApp VIP (Recursos Pro / Scale) */}
+                <div className="space-y-3 pt-2 border-t border-gray-100 dark:border-zinc-800">
+                  <div className="flex items-center justify-between">
+                    <p className="text-[11px] font-bold text-gray-900 dark:text-white flex items-center gap-1.5">
+                      <Sparkles className="w-3.5 h-3.5 text-[#EE4D2D]" />
+                      <span>Pixels de Rastreamento & Grupo VIP</span>
+                    </p>
+                    {isFreePlan && (
+                      <span className="text-[9px] font-black uppercase px-1.5 py-0.5 rounded bg-amber-500/20 text-amber-600">
+                        Plano PRO
+                      </span>
+                    )}
+                  </div>
+
+                  <div>
+                    <label className="block text-[11px] font-semibold mb-1" style={{ color: 'var(--text-secondary)' }}>
+                      Meta Pixel ID (Facebook / Instagram)
+                    </label>
+                    <input
+                      type="text"
+                      disabled={isFreePlan}
+                      value={profileDraft.pixel_meta || ''}
+                      onChange={(e) => setProfileDraft((prev) => ({ ...prev, pixel_meta: e.target.value }))}
+                      placeholder={isFreePlan ? 'Disponível no Plano Pro' : 'Ex: 123456789012345'}
+                      style={inputStyle}
+                      className="accent-focus w-full h-10 px-3 rounded-xl text-sm focus:outline-none disabled:opacity-50"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block text-[11px] font-semibold mb-1" style={{ color: 'var(--text-secondary)' }}>
+                      TikTok Pixel ID
+                    </label>
+                    <input
+                      type="text"
+                      disabled={isFreePlan}
+                      value={profileDraft.pixel_tiktok || ''}
+                      onChange={(e) => setProfileDraft((prev) => ({ ...prev, pixel_tiktok: e.target.value }))}
+                      placeholder={isFreePlan ? 'Disponível no Plano Pro' : 'Ex: C4A123BC456DEF789'}
+                      style={inputStyle}
+                      className="accent-focus w-full h-10 px-3 rounded-xl text-sm focus:outline-none disabled:opacity-50"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block text-[11px] font-semibold mb-1" style={{ color: 'var(--text-secondary)' }}>
+                      Link do Grupo VIP no WhatsApp
+                    </label>
+                    <input
+                      type="url"
+                      value={profileDraft.whatsapp_vip_url || ''}
+                      onChange={(e) => setProfileDraft((prev) => ({ ...prev, whatsapp_vip_url: e.target.value }))}
+                      placeholder="https://chat.whatsapp.com/..."
+                      style={inputStyle}
+                      className="accent-focus w-full h-10 px-3 rounded-xl text-sm focus:outline-none"
+                    />
+                  </div>
+                </div>
+
               <button
                 type="submit"
                 className="accent-btn w-full h-10 rounded-xl text-xs font-semibold flex items-center justify-center gap-1.5 shadow-xs transition-all active:scale-[0.98]"
               >
                 <Save className="w-4 h-4" />
-                <span>Salvar Perfil, Tema e Cupom</span>
+                <span>Salvar Perfil, Tema e Configurações</span>
               </button>
             </form>
           </section>
         )}
 
-        {/* TAB 3: EXPORT & IMPORT BACKUP */}
+        {/* TAB 3: ANALYTICS */}
+        {activeTab === 'analytics' && (
+          <AnalyticsView
+            profileId={profile.id || ''}
+            plan={profile.plan || 'free'}
+            isMasterAdmin={profile.is_master_admin}
+            onOpenUpgrade={() => {
+              setUpgradeReason('O Analytics de cliques detalhado é exclusivo para assinantes dos planos PRO e SCALE.');
+              setUpgradeModalOpen(true);
+            }}
+          />
+        )}
+
+        {/* TAB 4: EXPORT & IMPORT BACKUP */}
         {activeTab === 'export' && (
           <div className="space-y-4">
             <section className="card-surface rounded-2xl p-4 space-y-3.5">
@@ -1688,6 +1914,15 @@ export function AdminPanel({
           </div>
         )}
       </div>
+
+      {/* Modal de Upgrade de Planos */}
+      <PlanUpgradeModal
+        isOpen={upgradeModalOpen}
+        onClose={() => setUpgradeModalOpen(false)}
+        currentPlan={profile.plan || 'free'}
+        isMasterAdmin={profile.is_master_admin}
+        triggerReason={upgradeReason}
+      />
     </div>
   );
 }
