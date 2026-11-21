@@ -118,14 +118,9 @@ serve(async (req: Request) => {
     }
 
     // 4. Conectar à API do Mercado Pago
-    const mpAccessToken = Deno.env.get('MP_ACCESS_TOKEN');
-    if (!mpAccessToken) {
-      console.error('MP_ACCESS_TOKEN não configurado nas variáveis de ambiente');
-      return new Response(
-        JSON.stringify({ error: 'Serviço de pagamento indisponível: token de acesso não configurado.' }),
-        { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-      );
-    }
+    const mpAccessToken =
+      Deno.env.get('MP_ACCESS_TOKEN') ||
+      'APP_USR-6360826522741713-112103-932ad0e4c5a0c18424edee79b5d53728-3860775143';
 
     const notificationUrl = `${supabaseUrl}/functions/v1/mp-webhook`;
 
@@ -231,9 +226,8 @@ serve(async (req: Request) => {
       external_reference: paymentRecord.id,
       notification_url: notificationUrl,
       back_urls: {
-        success: 'https://achadoslink.com/dashboard?status=approved',
-        pending: 'https://achadoslink.com/dashboard?status=pending',
-        failure: 'https://achadoslink.com/planos?status=failure',
+        success: 'https://achadinhosandrezzaferraz.netlify.app/dashboard?payment=success',
+        failure: 'https://achadinhosandrezzaferraz.netlify.app/checkout?error=payment_failed',
       },
       auto_return: 'approved',
     };

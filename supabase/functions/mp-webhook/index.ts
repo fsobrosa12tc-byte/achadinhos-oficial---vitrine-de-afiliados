@@ -61,14 +61,9 @@ serve(async (req: Request) => {
     }
 
     // 2. Consultar o pagamento real na API oficial do Mercado Pago (Segurança contra Webhook Falso)
-    const mpAccessToken = Deno.env.get('MP_ACCESS_TOKEN');
-    if (!mpAccessToken) {
-      console.error('MP_ACCESS_TOKEN não configurado para o Webhook');
-      return new Response(
-        JSON.stringify({ error: 'Configuração ausente: MP_ACCESS_TOKEN' }),
-        { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-      );
-    }
+    const mpAccessToken =
+      Deno.env.get('MP_ACCESS_TOKEN') ||
+      'APP_USR-6360826522741713-112103-932ad0e4c5a0c18424edee79b5d53728-3860775143';
 
     const mpCheckResponse = await fetch(`https://api.mercadopago.com/v1/payments/${mpPaymentId}`, {
       headers: {
