@@ -1,0 +1,6 @@
+{
+  "summary":  "Plano de implementação completo para a Vitrine de Produtos Afiliados mobile-first (estilo Minha Coleção / Link in Bio), incluindo vitrine pública com busca por código, filtros por categoria e loja, ordenação, favoritos, compartilhamento via WhatsApp, selo de desconto automático, e Painel Admin com gestão de perfil/produtos e exportação/importação TS e JSON para deploy estático.",
+  "updatedAt":  "2026-11-21T03:25:04.288643932Z",
+  "requestFeedback":  true,
+  "userFacing":  true
+}

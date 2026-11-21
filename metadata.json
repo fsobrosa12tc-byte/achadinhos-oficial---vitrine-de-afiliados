@@ -1,0 +1,8 @@
+{
+  "name": "Achadinhos Oficial — Vitrine de Afiliados",
+  "description": "Vitrine mobile-first de produtos afiliados com busca por código, filtros dinâmicos, favoritos, compartilhamento no WhatsApp e painel gerenciador sem banco externo.",
+  "requestFramePermissions": [],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}
