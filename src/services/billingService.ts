@@ -119,13 +119,49 @@ export const billingService = {
 
   async createMercadoPagoPayment(payload: CheckoutFormPayload): Promise<CreatePaymentResult> {
     const totalAmount = this.calculateTotal(payload.plan, payload.billingCycle, payload.includeOrderBump);
+    const paymentMethod = payload.paymentMethod === 'credit_card' ? 'checkout_pro' : 'pix';
 
     try {
+      // 1. Chamada primária via RPC nativa PostgreSQL (Elimina 100% de erros de CORS no navegador)
+      const { data: rpcData, error: rpcError } = await supabase.rpc('create_mp_payment', {
+        p_plan_target: payload.plan,
+        p_billing_cycle: payload.billingCycle,
+        p_payment_method: paymentMethod,
+        p_has_order_bump: payload.includeOrderBump,
+        p_payer_email: payload.email,
+        p_payer_cpf: payload.document,
+        p_profile_id: payload.profileId,
+      });
+
+      if (!rpcError && rpcData) {
+        if (!rpcData.success) {
+          console.error('Erro retornado pela RPC create_mp_payment:', rpcData);
+          return {
+            success: false,
+            message: rpcData.error || 'Erro ao processar cobrança no Mercado Pago.',
+            rawError: rpcData,
+          };
+        }
+
+        return {
+          success: true,
+          paymentRecordId: rpcData.paymentRecordId,
+          paymentMethod: paymentMethod === 'checkout_pro' ? 'checkout_pro' : 'pix',
+          amount: totalAmount,
+          qrCode: rpcData.qr_code || rpcData.qrCode,
+          qrCodeBase64: rpcData.qr_code_base64 || rpcData.qrCodeBase64,
+          initPoint: rpcData.init_point || rpcData.initPoint,
+        };
+      }
+
+      console.warn('RPC create_mp_payment não encontrada ou com erro, tentando fallback Edge Function:', rpcError);
+
+      // 2. Fallback via Edge Function (caso a RPC ainda não esteja instalada no banco)
       const { data, error } = await supabase.functions.invoke('create-mp-payment', {
         body: {
           planTarget: payload.plan,
           billingCycle: payload.billingCycle,
-          paymentMethod: payload.paymentMethod === 'credit_card' ? 'checkout_pro' : 'pix',
+          paymentMethod,
           hasOrderBump: payload.includeOrderBump,
           payerEmail: payload.email,
           payerCpf: payload.document,
@@ -138,7 +174,7 @@ export const billingService = {
         console.error('Erro na resposta da Edge Function create-mp-payment:', error);
         return {
           success: false,
-          message: error.message || 'Falha ao comunicar com o servidor de pagamentos.',
+          message: error.message || rpcError?.message || 'Falha ao comunicar com o servidor de pagamentos.',
           rawError: error,
         };
       }
@@ -157,16 +193,16 @@ export const billingService = {
         paymentRecordId: data.paymentRecordId,
         paymentMethod: data.paymentMethod,
         amount: data.amount || totalAmount,
-        qrCode: data.qrCode,
-        qrCodeBase64: data.qrCodeBase64,
-        initPoint: data.initPoint,
+        qrCode: data.qrCode || data.qr_code,
+        qrCodeBase64: data.qrCodeBase64 || data.qr_code_base64,
+        initPoint: data.initPoint || data.init_point,
         sandboxInitPoint: data.sandboxInitPoint,
       };
     } catch (err: any) {
-      console.error('Exceção ao invocar Edge Function create-mp-payment:', err);
+      console.error('Exceção ao invocar processador de pagamento:', err);
       return {
         success: false,
-        message: err.message || 'Falha de conexão com a Edge Function.',
+        message: err.message || 'Falha de conexão com o servidor de pagamentos.',
         rawError: err,
       };
     }
