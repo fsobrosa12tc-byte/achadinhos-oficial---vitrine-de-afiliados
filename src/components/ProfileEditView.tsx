@@ -62,6 +62,7 @@ export function ProfileEditView({
   const [isUploadingAvatar, setIsUploadingAvatar] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
   const [saveSuccess, setSaveSuccess] = useState(false);
+  const [errorMessage, setErrorMessage] = useState('');
 
   const isFreePlan = (draft.plan === 'free' || !draft.plan) && !draft.is_master_admin;
 
@@ -101,11 +102,12 @@ export function ProfileEditView({
 
     try {
       setIsUploadingAvatar(true);
+      setErrorMessage('');
       const publicUrl = await supabaseService.uploadImage(file, 'avatars');
       setDraft((prev) => ({ ...prev, avatarUrl: publicUrl }));
     } catch (err: any) {
       console.error(err);
-      alert('Erro ao enviar avatar: ' + (err.message || 'Falha no Storage'));
+      setErrorMessage('Erro ao enviar avatar: ' + (err.message || 'Falha no Storage'));
     } finally {
       setIsUploadingAvatar(false);
     }
@@ -132,9 +134,10 @@ export function ProfileEditView({
 
   const handleSubmit = async (e: FormEvent) => {
     e.preventDefault();
+    setErrorMessage('');
 
     if (slugResult?.available === false) {
-      alert(slugResult.reason || 'Por favor, defina um @slug válido.');
+      setErrorMessage(slugResult.reason || 'Por favor, defina um @slug válido.');
       return;
     }
 
@@ -155,7 +158,7 @@ export function ProfileEditView({
       setTimeout(() => setSaveSuccess(false), 2500);
     } catch (err: any) {
       console.error(err);
-      alert('Erro ao salvar perfil no Supabase: ' + err.message);
+      setErrorMessage('Erro ao salvar perfil no Supabase: ' + err.message);
     } finally {
       setIsSaving(false);
     }
@@ -226,6 +229,11 @@ export function ProfileEditView({
           {/* Lado Esquerdo: Formulário de Configurações */}
           <div className={`lg:col-span-7 space-y-6 ${mobileTab === 'preview' ? 'hidden sm:block' : 'block'}`}>
             <form onSubmit={handleSubmit} className="space-y-6">
+              {errorMessage && (
+                <div className="p-3.5 rounded-2xl bg-red-500/10 border border-red-500/20 text-red-500 text-xs font-semibold animate-in fade-in">
+                  {errorMessage}
+                </div>
+              )}
               {/* 1. Card Dados Básicos */}
               <div className="bg-white dark:bg-[#111624] rounded-3xl p-6 shadow-sm border border-gray-200 dark:border-zinc-800 space-y-5">
                 <h2 className="text-sm font-bold text-gray-900 dark:text-white flex items-center gap-2">

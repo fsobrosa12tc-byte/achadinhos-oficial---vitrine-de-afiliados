@@ -74,6 +74,7 @@ interface AdminPanelProps {
   onNotify: (message: string, variant?: 'default' | 'success' | 'error') => void;
   onOpenProfileEditor?: () => void;
   onOpenPricing?: () => void;
+  onNavigateToCheckout?: (plan: 'pro' | 'scale', cycle?: 'monthly' | 'yearly') => void;
 }
 
 interface ProductFormState {
@@ -120,6 +121,7 @@ export function AdminPanel({
   onNotify,
   onOpenProfileEditor,
   onOpenPricing,
+  onNavigateToCheckout,
 }: AdminPanelProps) {
   const [activeTab, setActiveTab] = useState<AdminTab>('products');
   const [upgradeModalOpen, setUpgradeModalOpen] = useState(false);
@@ -1951,6 +1953,18 @@ export function AdminPanel({
         currentPlan={profile.plan || 'free'}
         isMasterAdmin={profile.is_master_admin}
         triggerReason={upgradeReason}
+        onSelectPlan={(plan, cycle) => {
+          setUpgradeModalOpen(false);
+          if (onNavigateToCheckout) {
+            onNavigateToCheckout(plan, cycle || 'monthly');
+          } else if (onOpenPricing) {
+            onOpenPricing();
+          } else {
+            const targetUrl = `/checkout?plan=${plan}&billing=${cycle || 'monthly'}`;
+            window.history.pushState(null, '', targetUrl);
+            window.dispatchEvent(new PopStateEvent('popstate'));
+          }
+        }}
       />
     </div>
   );

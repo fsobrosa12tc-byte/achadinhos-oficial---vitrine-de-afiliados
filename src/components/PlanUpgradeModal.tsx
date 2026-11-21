@@ -6,7 +6,7 @@ interface PlanUpgradeModalProps {
   onClose: () => void;
   currentPlan?: SaaSSubscriptionPlan;
   isMasterAdmin?: boolean;
-  onSelectPlan?: (plan: 'pro' | 'scale') => void;
+  onSelectPlan?: (plan: 'pro' | 'scale', cycle?: 'monthly' | 'yearly') => void;
   triggerReason?: string;
 }
 
@@ -15,9 +15,21 @@ export function PlanUpgradeModal({
   onClose,
   currentPlan = 'free',
   isMasterAdmin = false,
+  onSelectPlan,
   triggerReason,
 }: PlanUpgradeModalProps) {
   if (!isOpen) return null;
+
+  const handleSelectPlan = (plan: 'pro' | 'scale') => {
+    onClose();
+    if (onSelectPlan) {
+      onSelectPlan(plan, 'monthly');
+    } else {
+      const targetUrl = `/checkout?plan=${plan}&billing=monthly`;
+      window.history.pushState(null, '', targetUrl);
+      window.dispatchEvent(new PopStateEvent('popstate'));
+    }
+  };
 
   return (
     <div
@@ -55,7 +67,7 @@ export function PlanUpgradeModal({
           <button
             type="button"
             onClick={onClose}
-            className="w-8 h-8 rounded-full flex items-center justify-center hover:bg-black/5 dark:hover:bg-white/10"
+            className="w-8 h-8 rounded-full flex items-center justify-center hover:bg-black/5 dark:hover:bg-white/10 cursor-pointer"
             style={{ color: 'var(--text-muted)' }}
           >
             <X className="w-4 h-4" />
@@ -75,7 +87,7 @@ export function PlanUpgradeModal({
             <div>
               <span>👑 Conta Master Reconhecida — Nível Scale Ativo (Vitalício)</span>
               <p className="text-[11px] font-normal text-amber-600 dark:text-amber-400 mt-0.5">
-                Todos os recursos premium estão 100% liberados para sua conta de forma ilimitada.
+                Todos os recursos premium estão 100% liberados para sua conta de forma ilimitada sem necessidade de assinatura.
               </p>
             </div>
           </div>
@@ -130,12 +142,18 @@ export function PlanUpgradeModal({
                 </li>
               </ul>
             </div>
+
+            <div className="mt-5 text-center">
+              <span className="text-[11px] font-medium text-gray-400 block py-1">
+                {isMasterAdmin ? 'Incluso no Master' : currentPlan === 'free' ? 'Plano Atual' : 'Disponível'}
+              </span>
+            </div>
           </div>
 
           {/* Pro */}
           <div
             className={`p-4 rounded-2xl flex flex-col justify-between border relative ${
-              currentPlan === 'pro'
+              currentPlan === 'pro' && !isMasterAdmin
                 ? 'border-purple-500 bg-purple-500/5'
                 : 'border-orange-300 dark:border-orange-500/40 bg-orange-500/[0.03]'
             }`}
@@ -146,7 +164,7 @@ export function PlanUpgradeModal({
             <div>
               <div className="flex items-center justify-between mb-2">
                 <span className="text-xs font-bold uppercase tracking-wider text-orange-500">Pro</span>
-                {currentPlan === 'pro' && (
+                {currentPlan === 'pro' && !isMasterAdmin && (
                   <span className="text-[10px] font-extrabold px-2 py-0.5 rounded-full bg-purple-500 text-white">
                     Atual
                   </span>
@@ -191,10 +209,10 @@ export function PlanUpgradeModal({
             <button
               type="button"
               disabled={currentPlan === 'pro' || isMasterAdmin}
-              onClick={() => alert('Integração de pagamento pronta para conectar com checkout de sua preferência (ex: Cakto, Hotmart, Stripe)!')}
-              className="mt-5 w-full h-9 rounded-xl text-xs font-bold transition-all shadow-sm active:scale-95 bg-[#EE4D2D] hover:bg-[#D93D1E] text-white disabled:opacity-50"
+              onClick={() => handleSelectPlan('pro')}
+              className="mt-5 w-full h-9 rounded-xl text-xs font-bold transition-all shadow-sm active:scale-95 bg-[#EE4D2D] hover:bg-[#D93D1E] text-white disabled:opacity-50 cursor-pointer"
             >
-              {isMasterAdmin ? 'Incluso no Master' : currentPlan === 'pro' ? 'Plano Ativo' : 'Assinar Pro'}
+              {isMasterAdmin ? 'Incluso no Master Vitalício' : currentPlan === 'pro' ? 'Plano Ativo' : 'Assinar Pro'}
             </button>
           </div>
 
@@ -211,7 +229,7 @@ export function PlanUpgradeModal({
                 <span className="text-xs font-bold uppercase tracking-wider text-amber-500">Scale</span>
                 {(currentPlan === 'scale' || isMasterAdmin) && (
                   <span className="text-[10px] font-extrabold px-2 py-0.5 rounded-full bg-amber-500 text-white">
-                    {isMasterAdmin ? 'Master' : 'Atual'}
+                    {isMasterAdmin ? 'SCALE — Atual (Master Vitalício)' : 'Atual'}
                   </span>
                 )}
               </div>
@@ -250,10 +268,10 @@ export function PlanUpgradeModal({
             <button
               type="button"
               disabled={currentPlan === 'scale' || isMasterAdmin}
-              onClick={() => alert('Integração de pagamento pronta para conectar com checkout de sua preferência (ex: Cakto, Hotmart, Stripe)!')}
-              className="mt-5 w-full h-9 rounded-xl text-xs font-bold transition-all shadow-sm active:scale-95 bg-gradient-to-r from-amber-500 to-orange-500 hover:opacity-90 text-white disabled:opacity-50"
+              onClick={() => handleSelectPlan('scale')}
+              className="mt-5 w-full h-9 rounded-xl text-xs font-bold transition-all shadow-sm active:scale-95 bg-gradient-to-r from-amber-500 to-orange-500 hover:opacity-90 text-white disabled:opacity-50 cursor-pointer"
             >
-              {isMasterAdmin ? 'Incluso no Master' : currentPlan === 'scale' ? 'Plano Ativo' : 'Assinar Scale'}
+              {isMasterAdmin ? 'Plano Master Vitalício Ativo' : currentPlan === 'scale' ? 'Plano Ativo' : 'Assinar Scale'}
             </button>
           </div>
         </div>

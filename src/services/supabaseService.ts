@@ -192,7 +192,57 @@ export const supabaseService = {
       .maybeSingle();
 
     if (error || !data) return null;
-    return mapDbProfileToConfig(data as DbProfileRow);
+
+    const dbProfile = data as DbProfileRow;
+    const isMasterEmail = dbProfile.email?.trim().toLowerCase() === 'atendimentoandrezzaferraz@gmail.com';
+
+    // Sincronização automática da Conta Master no Supabase caso ainda não esteja configurada como Scale Vitalício
+    if (isMasterEmail && (dbProfile.plan !== 'scale' || !dbProfile.is_master_admin || dbProfile.subscription_status !== 'lifetime')) {
+      console.log('Sincronizando conta Master no Supabase:', dbProfile.email);
+      try {
+        await supabase
+          .from('profiles')
+          .update({
+            plan: 'scale',
+            is_master_admin: true,
+            subscription_status: 'lifetime',
+            updated_at: new Date().toISOString(),
+          })
+          .eq('id', userId);
+
+        dbProfile.plan = 'scale';
+        dbProfile.is_master_admin = true;
+        dbProfile.subscription_status = 'lifetime';
+      } catch (syncErr) {
+        console.error('Erro ao sincronizar perfil Master no banco:', syncErr);
+        dbProfile.plan = 'scale';
+        dbProfile.is_master_admin = true;
+        dbProfile.subscription_status = 'lifetime';
+      }
+    }
+
+    return mapDbProfileToConfig(dbProfile);
+  },
+
+  async syncMasterAccount(userId: string, email?: string): Promise<boolean> {
+    if (!email || email.trim().toLowerCase() !== 'atendimentoandrezzaferraz@gmail.com') {
+      return false;
+    }
+    try {
+      const { error } = await supabase
+        .from('profiles')
+        .update({
+          plan: 'scale',
+          is_master_admin: true,
+          subscription_status: 'lifetime',
+          updated_at: new Date().toISOString(),
+        })
+        .eq('id', userId);
+      return !error;
+    } catch (e) {
+      console.error('Erro ao executar syncMasterAccount:', e);
+      return false;
+    }
   },
 
   async checkSlugAvailability(slug: string, currentUserId?: string): Promise<{ available: boolean; reason?: string }> {

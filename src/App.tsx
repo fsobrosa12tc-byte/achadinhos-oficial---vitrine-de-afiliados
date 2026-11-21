@@ -75,11 +75,36 @@ export default function App() {
   const [authModalReason, setAuthModalReason] = useState<{ title?: string; description?: string }>({});
 
   // Route state
-  const [currentRoute, setCurrentRoute] = useState<AppRoute>('storefront');
+  const [currentRoute, setCurrentRoute] = useState<AppRoute>(() => {
+    const path = window.location.pathname.replace(/^\/+/, '').toLowerCase();
+    if (path === 'login') return 'login';
+    if (path === 'onboarding') return 'onboarding';
+    if (path === 'dashboard') return 'dashboard';
+    if (path === 'dashboard/perfil') return 'dashboard-profile';
+    if (path === 'planos') return 'pricing';
+    if (path.startsWith('checkout')) return 'checkout';
+    return 'storefront';
+  });
 
-  // Checkout states
-  const [checkoutPlan, setCheckoutPlan] = useState<'pro' | 'scale'>('pro');
-  const [checkoutCycle, setCheckoutCycle] = useState<BillingCycle>('monthly');
+  // Checkout states com leitura dos query params da URL (?plan=scale&billing=monthly)
+  const [checkoutPlan, setCheckoutPlan] = useState<'pro' | 'scale'>(() => {
+    try {
+      const searchParams = new URLSearchParams(window.location.search);
+      const p = searchParams.get('plan');
+      return p === 'scale' ? 'scale' : 'pro';
+    } catch {
+      return 'pro';
+    }
+  });
+  const [checkoutCycle, setCheckoutCycle] = useState<BillingCycle>(() => {
+    try {
+      const searchParams = new URLSearchParams(window.location.search);
+      const b = searchParams.get('billing');
+      return b === 'yearly' ? 'yearly' : 'monthly';
+    } catch {
+      return 'monthly';
+    }
+  });
 
   // Upgrade modal state
   const [upgradeModalOpen, setUpgradeModalOpen] = useState(false);
@@ -129,6 +154,8 @@ export default function App() {
     else if (route === 'checkout') {
       const p = queryParams?.plan || 'pro';
       const b = queryParams?.billing || 'monthly';
+      setCheckoutPlan(p);
+      setCheckoutCycle(b);
       targetPath = `/checkout?plan=${p}&billing=${b}`;
     }
 
@@ -137,10 +164,22 @@ export default function App() {
     }
   }, []);
 
-  // Monitorar popstate do navegador (voltar/avançar)
+  // Monitorar popstate do navegador (voltar/avançar e navegação reativa)
   useEffect(() => {
     const handlePopState = () => {
       const path = window.location.pathname.replace(/^\/+/, '').toLowerCase();
+      try {
+        const searchParams = new URLSearchParams(window.location.search);
+        const planParam = searchParams.get('plan') as 'pro' | 'scale' | null;
+        const billingParam = searchParams.get('billing') as BillingCycle | null;
+        if (planParam === 'pro' || planParam === 'scale') {
+          setCheckoutPlan(planParam);
+        }
+        if (billingParam === 'monthly' || billingParam === 'yearly') {
+          setCheckoutCycle(billingParam);
+        }
+      } catch {}
+
       if (path === 'login') setCurrentRoute('login');
       else if (path === 'onboarding') setCurrentRoute('onboarding');
       else if (path === 'dashboard') setCurrentRoute('dashboard');
@@ -167,12 +206,19 @@ export default function App() {
         const path = window.location.pathname.replace(/^\/+/, '').toLowerCase();
 
         if (user) {
+          const isMaster = user.email?.trim().toLowerCase() === 'atendimentoandrezzaferraz@gmail.com';
           const userProfile = await supabaseService.getProfileByUserId(user.id);
           if (!isMounted) return;
 
           if (!userProfile) {
             setCurrentRoute('onboarding');
           } else {
+            if (isMaster && (userProfile.plan !== 'scale' || !userProfile.is_master_admin || userProfile.subscription_status !== 'lifetime')) {
+              userProfile.plan = 'scale';
+              userProfile.is_master_admin = true;
+              userProfile.subscription_status = 'lifetime';
+              await supabaseService.syncMasterAccount(user.id, user.email);
+            }
             setProfile(userProfile);
             const dbProducts = await supabaseService.getProducts(userProfile.id || user.id);
             if (isMounted && dbProducts.length > 0) {
@@ -219,10 +265,17 @@ export default function App() {
       setCurrentUser(user);
 
       if (user) {
+        const isMaster = user.email?.trim().toLowerCase() === 'atendimentoandrezzaferraz@gmail.com';
         const userProfile = await supabaseService.getProfileByUserId(user.id);
         if (!userProfile) {
           setCurrentRoute('onboarding');
         } else {
+          if (isMaster && (userProfile.plan !== 'scale' || !userProfile.is_master_admin || userProfile.subscription_status !== 'lifetime')) {
+            userProfile.plan = 'scale';
+            userProfile.is_master_admin = true;
+            userProfile.subscription_status = 'lifetime';
+            await supabaseService.syncMasterAccount(user.id, user.email);
+          }
           setProfile(userProfile);
           const dbProducts = await supabaseService.getProducts(userProfile.id || user.id);
           if (dbProducts.length > 0) {
@@ -683,6 +736,7 @@ export default function App() {
             onNotify={notify}
             onOpenProfileEditor={() => navigateTo('dashboard-profile')}
             onOpenPricing={() => navigateTo('pricing')}
+            onNavigateToCheckout={(plan, cycle) => navigateTo('checkout', { plan, billing: cycle || 'monthly' })}
           />
         ) : (
           <>
@@ -917,10 +971,9 @@ export default function App() {
         currentPlan={profile.plan || 'free'}
         isMasterAdmin={profile.is_master_admin}
         triggerReason={upgradeReason}
-        onSelectPlan={(plan) => {
+        onSelectPlan={(plan, cycle) => {
           setUpgradeModalOpen(false);
-          setCheckoutPlan(plan);
-          navigateTo('checkout', { plan, billing: 'monthly' });
+          navigateTo('checkout', { plan, billing: cycle || 'monthly' });
         }}
       />
 
