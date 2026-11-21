@@ -72,6 +72,8 @@ interface AdminPanelProps {
   onBackToStore: () => void;
   onLogout: () => void;
   onNotify: (message: string, variant?: 'default' | 'success' | 'error') => void;
+  onOpenProfileEditor?: () => void;
+  onOpenPricing?: () => void;
 }
 
 interface ProductFormState {
@@ -116,6 +118,8 @@ export function AdminPanel({
   onBackToStore,
   onLogout,
   onNotify,
+  onOpenProfileEditor,
+  onOpenPricing,
 }: AdminPanelProps) {
   const [activeTab, setActiveTab] = useState<AdminTab>('products');
   const [upgradeModalOpen, setUpgradeModalOpen] = useState(false);
@@ -435,8 +439,12 @@ export function AdminPanel({
             <button
               type="button"
               onClick={() => {
-                setUpgradeReason(undefined);
-                setUpgradeModalOpen(true);
+                if (onOpenPricing) {
+                  onOpenPricing();
+                } else {
+                  setUpgradeReason(undefined);
+                  setUpgradeModalOpen(true);
+                }
               }}
               className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[10.5px] font-bold transition-all shadow-xs active:scale-95 cursor-pointer"
               style={
@@ -1123,6 +1131,27 @@ export function AdminPanel({
         {/* TAB 2: PROFILE, THEME & COUPON */}
         {activeTab === 'profile' && (
           <section className="space-y-4">
+            {onOpenProfileEditor && (
+              <div className="p-4 rounded-2xl bg-gradient-to-r from-[#EE4D2D]/10 via-orange-500/10 to-purple-500/10 border border-[#EE4D2D]/20 flex items-center justify-between gap-3">
+                <div>
+                  <h3 className="text-xs font-bold text-gray-900 dark:text-white flex items-center gap-1.5">
+                    <Sparkles className="w-3.5 h-3.5 text-[#EE4D2D]" />
+                    <span>Editor Visual Split-Screen</span>
+                  </h3>
+                  <p className="text-[11px] text-gray-500 dark:text-zinc-400 mt-0.5">
+                    Edite com prévia em tempo real em moldura de celular lado a lado
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  onClick={onOpenProfileEditor}
+                  className="px-3.5 py-2 rounded-xl bg-[#EE4D2D] hover:bg-[#D93D1E] text-white text-xs font-bold shadow-xs active:scale-95 transition-all cursor-pointer shrink-0"
+                >
+                  Abrir Split-Screen
+                </button>
+              </div>
+            )}
+
             <div className="card-surface rounded-2xl overflow-hidden">
               <div
                 className="text-[11px] font-medium px-3.5 py-1.5"

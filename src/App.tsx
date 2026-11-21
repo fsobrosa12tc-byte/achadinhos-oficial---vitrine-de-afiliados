@@ -3,12 +3,10 @@ import {
   ArrowUpDown,
   Heart,
   Lock,
-  LogOut,
   SearchX,
   Settings,
   Sparkles,
   Store,
-  User,
 } from 'lucide-react';
 import { INITIAL_PRODUCTS, INITIAL_PROFILE } from './data/initialData';
 import {
@@ -37,9 +35,14 @@ import {
 import { ProductCard } from './components/ProductCard';
 import { AdminPanel } from './components/AdminPanel';
 import { GoogleAuthModal } from './components/GoogleAuthModal';
-import { OnboardingView } from './components/OnboardingView';
+import { LoginView } from './components/LoginView';
+import { ProfileEditView } from './components/ProfileEditView';
+import { PricingView } from './components/PricingView';
+import { CheckoutView } from './components/CheckoutView';
+import { PlanUpgradeModal } from './components/PlanUpgradeModal';
 import { ToastContainer } from './components/ToastContainer';
 import { supabaseService } from './services/supabaseService';
+import { BillingCycle } from './services/billingService';
 
 const STORAGE_KEY_PRODUCTS = 'vitrine_achadinhos_products_v1';
 const STORAGE_KEY_PROFILE = 'vitrine_achadinhos_profile_v1';
@@ -56,15 +59,31 @@ function loadFromStorage<T>(key: string, fallback: T): T {
   }
 }
 
+export type AppRoute =
+  | 'storefront'
+  | 'login'
+  | 'onboarding'
+  | 'dashboard'
+  | 'dashboard-profile'
+  | 'pricing'
+  | 'checkout';
+
 export default function App() {
   // Supabase Auth & Profile states
   const [currentUser, setCurrentUser] = useState<any>(null);
-  const [isLoadingAuth, setIsLoadingAuth] = useState(true);
   const [authModalOpen, setAuthModalOpen] = useState(false);
   const [authModalReason, setAuthModalReason] = useState<{ title?: string; description?: string }>({});
 
-  // Route state ('storefront' | 'dashboard' | 'onboarding')
-  const [currentRoute, setCurrentRoute] = useState<'storefront' | 'dashboard' | 'onboarding'>('storefront');
+  // Route state
+  const [currentRoute, setCurrentRoute] = useState<AppRoute>('storefront');
+
+  // Checkout states
+  const [checkoutPlan, setCheckoutPlan] = useState<'pro' | 'scale'>('pro');
+  const [checkoutCycle, setCheckoutCycle] = useState<BillingCycle>('monthly');
+
+  // Upgrade modal state
+  const [upgradeModalOpen, setUpgradeModalOpen] = useState(false);
+  const [upgradeReason, setUpgradeReason] = useState<string | undefined>(undefined);
 
   // Core data states
   const [products, setProducts] = useState<Product[]>(() =>
@@ -98,7 +117,44 @@ export default function App() {
     []
   );
 
-  // 1. Monitorar Autenticação e Carregar Perfil do Supabase
+  // Navegação sem reload com pushState
+  const navigateTo = useCallback((route: AppRoute, queryParams?: { plan?: 'pro' | 'scale'; billing?: BillingCycle }) => {
+    setCurrentRoute(route);
+    let targetPath = '/';
+    if (route === 'login') targetPath = '/login';
+    else if (route === 'onboarding') targetPath = '/onboarding';
+    else if (route === 'dashboard') targetPath = '/dashboard';
+    else if (route === 'dashboard-profile') targetPath = '/dashboard/perfil';
+    else if (route === 'pricing') targetPath = '/planos';
+    else if (route === 'checkout') {
+      const p = queryParams?.plan || 'pro';
+      const b = queryParams?.billing || 'monthly';
+      targetPath = `/checkout?plan=${p}&billing=${b}`;
+    }
+
+    if (window.location.pathname !== targetPath) {
+      window.history.pushState(null, '', targetPath);
+    }
+  }, []);
+
+  // Monitorar popstate do navegador (voltar/avançar)
+  useEffect(() => {
+    const handlePopState = () => {
+      const path = window.location.pathname.replace(/^\/+/, '').toLowerCase();
+      if (path === 'login') setCurrentRoute('login');
+      else if (path === 'onboarding') setCurrentRoute('onboarding');
+      else if (path === 'dashboard') setCurrentRoute('dashboard');
+      else if (path === 'dashboard/perfil') setCurrentRoute('dashboard-profile');
+      else if (path === 'planos') setCurrentRoute('pricing');
+      else if (path.startsWith('checkout')) setCurrentRoute('checkout');
+      else setCurrentRoute('storefront');
+    };
+
+    window.addEventListener('popstate', handlePopState);
+    return () => window.removeEventListener('popstate', handlePopState);
+  }, []);
+
+  // 1. Inicializar Autenticação e Carregar Perfil do Supabase
   useEffect(() => {
     let isMounted = true;
 
@@ -115,23 +171,32 @@ export default function App() {
           if (!isMounted) return;
 
           if (!userProfile) {
-            // Usuário logado mas sem perfil -> Onboarding obrigatório
             setCurrentRoute('onboarding');
           } else {
             setProfile(userProfile);
-            // Carregar produtos do Supabase
             const dbProducts = await supabaseService.getProducts(userProfile.id || user.id);
             if (isMounted && dbProducts.length > 0) {
               setProducts(dbProducts);
             }
 
-            if (path === 'dashboard' || path === 'onboarding') {
-              setCurrentRoute('dashboard');
-            }
+            if (path === 'dashboard') setCurrentRoute('dashboard');
+            else if (path === 'dashboard/perfil') setCurrentRoute('dashboard-profile');
+            else if (path === 'planos') setCurrentRoute('pricing');
+            else if (path.startsWith('checkout')) setCurrentRoute('checkout');
+            else if (path === 'login' || path === 'onboarding') setCurrentRoute('dashboard');
           }
         } else {
-          // Visitante público - verificar se a rota é um slug de criador (ex: /andrezza ou /@andrezza)
-          if (path && path !== 'dashboard' && path !== 'onboarding') {
+          // Visitante público
+          if (path === 'login') {
+            setCurrentRoute('login');
+          } else if (path === 'planos') {
+            setCurrentRoute('pricing');
+          } else if (path.startsWith('checkout')) {
+            setCurrentRoute('checkout');
+          } else if (path === 'dashboard' || path === 'dashboard/perfil') {
+            setCurrentRoute('login');
+          } else if (path) {
+            // Slug público (ex: /andrezza ou /@andrezza)
             const publicProfile = await supabaseService.getProfileBySlug(path);
             if (isMounted && publicProfile) {
               setProfile(publicProfile);
@@ -140,18 +205,10 @@ export default function App() {
                 setProducts(dbProducts);
               }
             }
-          } else if (path === 'dashboard') {
-            setAuthModalReason({
-              title: 'Acesse o Painel Gerenciador',
-              description: 'Faça login com sua conta Google para gerenciar seus produtos e vitrine.',
-            });
-            setAuthModalOpen(true);
           }
         }
       } catch (err) {
         console.error('Erro na inicialização Supabase:', err);
-      } finally {
-        if (isMounted) setIsLoadingAuth(false);
       }
     }
 
@@ -211,7 +268,7 @@ export default function App() {
     }
   }, [profile.themeConfig.mode, activeAccentPreset]);
 
-  // 3. Sincronização de Favoritos (LocalStorage sem atrito para o comprador)
+  // 3. Sincronização de Favoritos
   useEffect(() => {
     try {
       window.localStorage.setItem(STORAGE_KEY_FAVORITES, JSON.stringify(favoriteIds));
@@ -318,7 +375,7 @@ export default function App() {
     validFavoriteIds,
   ]);
 
-  // Handlers
+  // Handlers da Vitrine
   const handleToggleFavorite = (productId: string) => {
     setFavoriteIds((prev) => {
       const exists = prev.includes(productId);
@@ -368,7 +425,6 @@ export default function App() {
     });
   };
 
-  // Disparo de Clique via RPC no Supabase
   const handleProductOfferClick = (productId: string) => {
     if (profile.id) {
       supabaseService.recordProductClick(productId, profile.id, document.referrer);
@@ -467,13 +523,9 @@ export default function App() {
 
   const handleOpenDashboardTrigger = () => {
     if (currentUser) {
-      setCurrentRoute('dashboard');
+      navigateTo('dashboard');
     } else {
-      setAuthModalReason({
-        title: 'Acesse o Painel Gerenciador',
-        description: 'Faça login com sua conta Google para gerenciar sua vitrine de afiliados.',
-      });
-      setAuthModalOpen(true);
+      navigateTo('login');
     }
   };
 
@@ -481,7 +533,7 @@ export default function App() {
     try {
       await supabaseService.signOut();
       setCurrentUser(null);
-      setCurrentRoute('storefront');
+      navigateTo('storefront');
       notify('Sessão encerrada com sucesso.');
     } catch (err) {
       console.error(err);
@@ -495,24 +547,99 @@ export default function App() {
     selectedStore !== 'Todas' ||
     sortBy !== 'featured';
 
-  // Verifica se a vitrine atual deve exibir a marca d'água no rodapé
   const isFreePlan = (profile.plan === 'free' || !profile.plan) && !profile.is_master_admin;
 
-  // Rota de Onboarding (Novo Criador pós-Google OAuth)
-  if (currentRoute === 'onboarding' && currentUser) {
+  // -------------------------------------------------------------
+  // RENDERIZAÇÃO CONDICIONAL POR ROTAS SAAS
+  // -------------------------------------------------------------
+
+  // ROTA 1: LOGIN & CADASTRO SPLIT-SCREEN (/login)
+  if (currentRoute === 'login') {
     return (
-      <OnboardingView
-        user={currentUser}
-        onProfileCreated={(newProfile) => {
-          setProfile(newProfile);
-          setCurrentRoute('dashboard');
-          notify('Vitrine criada com sucesso! Bem-vindo ao painel.', 'success');
-        }}
-        onCancel={() => setCurrentRoute('storefront')}
+      <LoginView
+        onBackToHome={() => navigateTo('storefront')}
+        onSuccess={() => navigateTo('dashboard')}
       />
     );
   }
 
+  // ROTA 2: ONBOARDING / CONFIGURAÇÃO INICIAL (/onboarding)
+  if (currentRoute === 'onboarding' && currentUser) {
+    return (
+      <ProfileEditView
+        user={currentUser}
+        initialProfile={profile}
+        sampleProducts={products}
+        isOnboarding={true}
+        onSave={(newProfile) => {
+          setProfile(newProfile);
+          navigateTo('dashboard');
+          notify('Vitrine configurada com sucesso! Bem-vindo ao painel.', 'success');
+        }}
+        onBackToDashboard={() => navigateTo('storefront')}
+        onOpenUpgradeModal={(reason) => {
+          setUpgradeReason(reason);
+          setUpgradeModalOpen(true);
+        }}
+      />
+    );
+  }
+
+  // ROTA 3: EDIÇÃO DE PERFIL E TEMAS SPLIT-SCREEN (/dashboard/perfil)
+  if (currentRoute === 'dashboard-profile') {
+    return (
+      <ProfileEditView
+        user={currentUser}
+        initialProfile={profile}
+        sampleProducts={products}
+        isOnboarding={false}
+        onSave={(updated) => {
+          setProfile(updated);
+          notify('Perfil e aparência salvos com sucesso!', 'success');
+        }}
+        onBackToDashboard={() => navigateTo('dashboard')}
+        onOpenUpgradeModal={(reason) => {
+          setUpgradeReason(reason);
+          setUpgradeModalOpen(true);
+        }}
+      />
+    );
+  }
+
+  // ROTA 4: TABELA COMPARATIVA DE PLANOS (/planos)
+  if (currentRoute === 'pricing') {
+    return (
+      <PricingView
+        currentProfile={profile}
+        onSelectPlan={(plan, cycle) => {
+          setCheckoutPlan(plan);
+          setCheckoutCycle(cycle);
+          navigateTo('checkout', { plan, billing: cycle });
+        }}
+        onBack={() => navigateTo(currentUser ? 'dashboard' : 'storefront')}
+      />
+    );
+  }
+
+  // ROTA 5: CHECKOUT TRANSPARENTE COM SANDBOX (/checkout)
+  if (currentRoute === 'checkout') {
+    return (
+      <CheckoutView
+        user={currentUser}
+        currentProfile={profile}
+        selectedPlan={checkoutPlan}
+        billingCycle={checkoutCycle}
+        onSuccess={(upgradedProfile) => {
+          setProfile(upgradedProfile);
+          navigateTo('dashboard');
+          notify(`🎉 Plano ${checkoutPlan.toUpperCase()} ativado com sucesso!`, 'success');
+        }}
+        onBack={() => navigateTo('pricing')}
+      />
+    );
+  }
+
+  // ROTA 6 & 7: VITRINE PÚBLICA (/) OU DASHBOARD (/dashboard)
   return (
     <div
       data-theme={profile.themeConfig.mode}
@@ -551,9 +678,11 @@ export default function App() {
             onUpdateProfile={handleUpdateProfile}
             onImportBackup={handleImportBackup}
             onResetDefaults={handleResetDefaults}
-            onBackToStore={() => setCurrentRoute('storefront')}
+            onBackToStore={() => navigateTo('storefront')}
             onLogout={handleLogout}
             onNotify={notify}
+            onOpenProfileEditor={() => navigateTo('dashboard-profile')}
+            onOpenPricing={() => navigateTo('pricing')}
           />
         ) : (
           <>
@@ -761,13 +890,7 @@ export default function App() {
               >
                 <button
                   type="button"
-                  onClick={() => {
-                    setAuthModalReason({
-                      title: 'Crie sua Vitrine de Afiliados Grátis',
-                      description: 'Tenha seu link de bio com busca por código de vídeo em menos de 2 minutos com sua conta Google!',
-                    });
-                    setAuthModalOpen(true);
-                  }}
+                  onClick={() => navigateTo('login')}
                   className="inline-flex items-center gap-1.5 text-[11px] font-semibold text-gray-500 hover:text-[#EE4D2D] dark:text-zinc-400 dark:hover:text-[#EE4D2D] transition-colors cursor-pointer"
                 >
                   <Sparkles className="w-3.5 h-3.5 text-[#EE4D2D]" />
@@ -779,12 +902,26 @@ export default function App() {
         )}
       </div>
 
-      {/* Modal de Autenticação com Google */}
+      {/* Modal de Autenticação com Google (Overlay opcional) */}
       <GoogleAuthModal
         isOpen={authModalOpen}
         onClose={() => setAuthModalOpen(false)}
         title={authModalReason.title}
         description={authModalReason.description}
+      />
+
+      {/* Modal de Upgrade de Planos */}
+      <PlanUpgradeModal
+        isOpen={upgradeModalOpen}
+        onClose={() => setUpgradeModalOpen(false)}
+        currentPlan={profile.plan || 'free'}
+        isMasterAdmin={profile.is_master_admin}
+        triggerReason={upgradeReason}
+        onSelectPlan={(plan) => {
+          setUpgradeModalOpen(false);
+          setCheckoutPlan(plan);
+          navigateTo('checkout', { plan, billing: 'monthly' });
+        }}
       />
 
       {/* Non-blocking Toast Notifications */}

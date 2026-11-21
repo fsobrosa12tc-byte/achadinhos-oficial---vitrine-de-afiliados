@@ -28,6 +28,7 @@ export interface DbProfileRow {
   pixel_meta: string | null;
   pixel_tiktok: string | null;
   created_at: string;
+  updated_at?: string;
 }
 
 export interface DbProductRow {
@@ -122,6 +123,25 @@ export function mapDbProductToProduct(db: DbProductRow, categoryName?: string): 
   };
 }
 
+export const RESERVED_SLUGS = [
+  'login',
+  'dashboard',
+  'admin',
+  'planos',
+  'checkout',
+  'api',
+  'auth',
+  'onboarding',
+  'perfil',
+  'settings',
+  'vitrine',
+];
+
+export function isReservedSlug(slug: string): boolean {
+  const clean = slug.replace(/^@+/, '').trim().toLowerCase();
+  return RESERVED_SLUGS.includes(clean);
+}
+
 export const supabaseService = {
   // --- AUTENTICAÇÃO ---
   async signInWithGoogle() {
@@ -175,16 +195,27 @@ export const supabaseService = {
     return mapDbProfileToConfig(data as DbProfileRow);
   },
 
-  async checkSlugAvailability(slug: string, currentUserId?: string): Promise<boolean> {
+  async checkSlugAvailability(slug: string, currentUserId?: string): Promise<{ available: boolean; reason?: string }> {
     const cleanSlug = slug.replace(/^@+/, '').trim().toLowerCase();
-    if (!cleanSlug) return false;
+    if (!cleanSlug) return { available: false, reason: 'Slug não pode ser vazio' };
+
+    if (!/^[a-z0-9_-]{3,30}$/.test(cleanSlug)) {
+      return { available: false, reason: 'O link deve ter entre 3 e 30 letras, números, hífens ou underlines.' };
+    }
+
+    if (isReservedSlug(cleanSlug)) {
+      return { available: false, reason: `O slug "@${cleanSlug}" é um link reservado do sistema. Escolha outro.` };
+    }
 
     let query = supabase.from('profiles').select('id').eq('slug', cleanSlug);
     if (currentUserId) {
       query = query.neq('id', currentUserId);
     }
     const { data } = await query.maybeSingle();
-    return !data;
+    if (data) {
+      return { available: false, reason: `O link @${cleanSlug} já está em uso por outro criador.` };
+    }
+    return { available: true };
   },
 
   async createProfile(params: {
@@ -237,11 +268,56 @@ export const supabaseService = {
       pixel_meta: profile.pixel_meta || null,
       pixel_tiktok: profile.pixel_tiktok || null,
       featured_coupon: profile.coupon ? JSON.stringify(profile.coupon) : null,
+      updated_at: new Date().toISOString(),
     };
 
     const { error } = await supabase
       .from('profiles')
       .update(payload)
+      .eq('id', profileId);
+
+    if (error) throw error;
+  },
+
+  async upsertProfile(profile: ProfileConfig): Promise<ProfileConfig> {
+    if (!profile.id) throw new Error('ID do usuário é obrigatório para salvar perfil');
+
+    const cleanSlug = profile.handle.replace(/^@+/, '').trim().toLowerCase();
+    const payload: Partial<DbProfileRow> = {
+      id: profile.id,
+      slug: cleanSlug,
+      display_name: profile.display_name || cleanSlug,
+      bio: profile.bio || '',
+      avatar_url: profile.avatarUrl || '',
+      banner_color: profile.themeConfig.accentColor,
+      theme_mode: profile.themeConfig.mode,
+      layout_style: profile.themeConfig.layoutStyle,
+      social_links: profile.socials,
+      whatsapp_vip_url: profile.whatsapp_vip_url || null,
+      pixel_meta: profile.pixel_meta || null,
+      pixel_tiktok: profile.pixel_tiktok || null,
+      featured_coupon: profile.coupon ? JSON.stringify(profile.coupon) : null,
+      updated_at: new Date().toISOString(),
+    };
+
+    const { data, error } = await supabase
+      .from('profiles')
+      .upsert(payload)
+      .select()
+      .single();
+
+    if (error) throw error;
+    return mapDbProfileToConfig(data as DbProfileRow);
+  },
+
+  async upgradePlan(profileId: string, plan: 'pro' | 'scale', billingCycle: 'monthly' | 'yearly'): Promise<void> {
+    const { error } = await supabase
+      .from('profiles')
+      .update({
+        plan,
+        subscription_status: 'active',
+        updated_at: new Date().toISOString(),
+      })
       .eq('id', profileId);
 
     if (error) throw error;

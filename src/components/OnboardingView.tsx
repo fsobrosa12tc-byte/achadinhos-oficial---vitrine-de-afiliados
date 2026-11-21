@@ -58,10 +58,10 @@ export function OnboardingView({ user, onProfileCreated, onCancel }: OnboardingV
 
     const timer = setTimeout(async () => {
       try {
-        const available = await supabaseService.checkSlugAvailability(clean);
-        setIsSlugAvailable(available);
-        if (!available) {
-          setSlugError('Este @slug já está em uso por outro criador. Escolha outro.');
+        const res = await supabaseService.checkSlugAvailability(clean);
+        setIsSlugAvailable(res.available);
+        if (!res.available) {
+          setSlugError(res.reason || 'Este @slug já está em uso por outro criador. Escolha outro.');
         }
       } catch (err) {
         console.error('Erro ao verificar slug:', err);
