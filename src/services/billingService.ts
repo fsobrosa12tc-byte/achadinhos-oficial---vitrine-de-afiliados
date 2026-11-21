@@ -1,4 +1,5 @@
 import { supabaseService } from './supabaseService';
+import { supabase } from '../lib/supabase';
 import { SaaSSubscriptionPlan } from '../types';
 
 export type BillingCycle = 'monthly' | 'yearly';
@@ -97,10 +98,71 @@ export interface CheckoutFormPayload {
   };
 }
 
+export interface CreatePaymentResult {
+  success: boolean;
+  paymentRecordId?: string;
+  paymentMethod?: 'pix' | 'checkout_pro';
+  amount?: number;
+  qrCode?: string;
+  qrCodeBase64?: string;
+  initPoint?: string;
+  sandboxInitPoint?: string;
+  message?: string;
+}
+
 export const billingService = {
   calculateTotal(plan: 'pro' | 'scale', cycle: BillingCycle, includeOrderBump: boolean): number {
     const basePrice = cycle === 'yearly' ? SAAS_PLANS[plan].yearlyPrice : SAAS_PLANS[plan].monthlyPrice;
     return basePrice + (includeOrderBump ? ORDER_BUMP_PRICE : 0);
+  },
+
+  async createMercadoPagoPayment(payload: CheckoutFormPayload): Promise<CreatePaymentResult> {
+    try {
+      const { data, error } = await supabase.functions.invoke('create-mp-payment', {
+        body: {
+          planTarget: payload.plan,
+          billingCycle: payload.billingCycle,
+          paymentMethod: payload.paymentMethod === 'credit_card' ? 'checkout_pro' : 'pix',
+          hasOrderBump: payload.includeOrderBump,
+          payerEmail: payload.email,
+          payerCpf: payload.document,
+          payerName: payload.name,
+          profileId: payload.profileId,
+        },
+      });
+
+      if (error) {
+        console.error('Erro na resposta da Edge Function create-mp-payment:', error);
+        return {
+          success: false,
+          message: error.message || 'Falha ao comunicar com o servidor de pagamentos.',
+        };
+      }
+
+      if (!data || !data.success) {
+        return {
+          success: false,
+          message: data?.error || 'Erro ao processar transação no Mercado Pago.',
+        };
+      }
+
+      return {
+        success: true,
+        paymentRecordId: data.paymentRecordId,
+        paymentMethod: data.paymentMethod,
+        amount: data.amount,
+        qrCode: data.qrCode,
+        qrCodeBase64: data.qrCodeBase64,
+        initPoint: data.initPoint,
+        sandboxInitPoint: data.sandboxInitPoint,
+      };
+    } catch (err: any) {
+      console.error('Erro ao invocar Edge Function create-mp-payment:', err);
+      return {
+        success: false,
+        message: err.message || 'Falha de conexão com o serviço de pagamentos.',
+      };
+    }
   },
 
   async simulateSandboxCheckout(payload: CheckoutFormPayload): Promise<{ success: boolean; message: string }> {
