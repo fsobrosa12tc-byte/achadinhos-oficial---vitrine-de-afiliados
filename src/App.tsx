@@ -68,6 +68,24 @@ export type AppRoute =
   | 'pricing'
   | 'checkout';
 
+export function extractPublicSlug(pathname: string): string | null {
+  const clean = pathname.replace(/^\/+/, '').trim();
+  const lower = clean.toLowerCase();
+  if (
+    !clean ||
+    lower === 'login' ||
+    lower === 'onboarding' ||
+    lower === 'dashboard' ||
+    lower.startsWith('dashboard/') ||
+    lower === 'planos' ||
+    lower.startsWith('checkout') ||
+    lower === 'admin'
+  ) {
+    return null;
+  }
+  return decodeURIComponent(clean).replace(/^@+/, '').trim().toLowerCase();
+}
+
 export default function App() {
   // Supabase Auth & Profile states
   const [currentUser, setCurrentUser] = useState<any>(null);
@@ -186,7 +204,20 @@ export default function App() {
       else if (path === 'dashboard/perfil') setCurrentRoute('dashboard-profile');
       else if (path === 'planos') setCurrentRoute('pricing');
       else if (path.startsWith('checkout')) setCurrentRoute('checkout');
-      else setCurrentRoute('storefront');
+      else {
+        setCurrentRoute('storefront');
+        const requestedSlug = extractPublicSlug(window.location.pathname);
+        if (requestedSlug) {
+          supabaseService.getProfileBySlug(requestedSlug).then((p) => {
+            if (p) {
+              setProfile(p);
+              supabaseService.getProducts(p.id || '', true).then((dbProducts) => {
+                setProducts(dbProducts);
+              });
+            }
+          });
+        }
+      }
     };
 
     window.addEventListener('popstate', handlePopState);
@@ -204,7 +235,31 @@ export default function App() {
         setCurrentUser(user);
 
         const path = window.location.pathname.replace(/^\/+/, '').toLowerCase();
+        const requestedSlug = extractPublicSlug(window.location.pathname);
 
+        // 1. PRIORIDADE MÁXIMA: Rota de Slug Público da Vitrine (ex: /promosdaandrezza ou /@promosdaandrezza)
+        if (requestedSlug) {
+          const publicProfile = await supabaseService.getProfileBySlug(requestedSlug);
+          if (isMounted && publicProfile) {
+            setProfile(publicProfile);
+            try {
+              window.localStorage.setItem(STORAGE_KEY_PROFILE, JSON.stringify(publicProfile));
+            } catch {}
+
+            // Busca os produtos REAIS deste perfil no Supabase
+            const dbProducts = await supabaseService.getProducts(publicProfile.id || '', true);
+            if (isMounted) {
+              setProducts(dbProducts);
+              try {
+                window.localStorage.setItem(STORAGE_KEY_PRODUCTS, JSON.stringify(dbProducts));
+              } catch {}
+            }
+            setCurrentRoute('storefront');
+            return;
+          }
+        }
+
+        // 2. Rotas do Usuário Logado ou Painel / Onboarding
         if (user) {
           const isMaster = user.email?.trim().toLowerCase() === 'atendimentoandrezzaferraz@gmail.com';
           const userProfile = await supabaseService.getProfileByUserId(user.id);
@@ -220,9 +275,16 @@ export default function App() {
               await supabaseService.syncMasterAccount(user.id, user.email);
             }
             setProfile(userProfile);
+            try {
+              window.localStorage.setItem(STORAGE_KEY_PROFILE, JSON.stringify(userProfile));
+            } catch {}
+
             const dbProducts = await supabaseService.getProducts(userProfile.id || user.id);
-            if (isMounted && dbProducts.length > 0) {
+            if (isMounted) {
               setProducts(dbProducts);
+              try {
+                window.localStorage.setItem(STORAGE_KEY_PRODUCTS, JSON.stringify(dbProducts));
+              } catch {}
             }
 
             if (path === 'dashboard') setCurrentRoute('dashboard');
@@ -230,9 +292,10 @@ export default function App() {
             else if (path === 'planos') setCurrentRoute('pricing');
             else if (path.startsWith('checkout')) setCurrentRoute('checkout');
             else if (path === 'login' || path === 'onboarding') setCurrentRoute('dashboard');
+            else setCurrentRoute('storefront');
           }
         } else {
-          // Visitante público
+          // 3. Visitante Público na Raiz ou Rotas Gerais
           if (path === 'login') {
             setCurrentRoute('login');
           } else if (path === 'planos') {
@@ -241,16 +304,24 @@ export default function App() {
             setCurrentRoute('checkout');
           } else if (path === 'dashboard' || path === 'dashboard/perfil') {
             setCurrentRoute('login');
-          } else if (path) {
-            // Slug público (ex: /andrezza ou /@andrezza)
-            const publicProfile = await supabaseService.getProfileBySlug(path);
-            if (isMounted && publicProfile) {
-              setProfile(publicProfile);
-              const dbProducts = await supabaseService.getProducts(publicProfile.id || '', true);
+          } else {
+            // Raiz /: carrega a vitrine oficial cadastrada no Supabase
+            const defaultProfile = await supabaseService.getDefaultPublicProfile();
+            if (isMounted && defaultProfile) {
+              setProfile(defaultProfile);
+              try {
+                window.localStorage.setItem(STORAGE_KEY_PROFILE, JSON.stringify(defaultProfile));
+              } catch {}
+
+              const dbProducts = await supabaseService.getProducts(defaultProfile.id || '', true);
               if (isMounted && dbProducts.length > 0) {
                 setProducts(dbProducts);
+                try {
+                  window.localStorage.setItem(STORAGE_KEY_PRODUCTS, JSON.stringify(dbProducts));
+                } catch {}
               }
             }
+            setCurrentRoute('storefront');
           }
         }
       } catch (err) {
@@ -265,6 +336,12 @@ export default function App() {
       setCurrentUser(user);
 
       if (user) {
+        const requestedSlug = extractPublicSlug(window.location.pathname);
+        if (requestedSlug) {
+          // Se está em rota de slug público, mantém a vitrine do slug
+          return;
+        }
+
         const isMaster = user.email?.trim().toLowerCase() === 'atendimentoandrezzaferraz@gmail.com';
         const userProfile = await supabaseService.getProfileByUserId(user.id);
         if (!userProfile) {
@@ -277,9 +354,16 @@ export default function App() {
             await supabaseService.syncMasterAccount(user.id, user.email);
           }
           setProfile(userProfile);
+          try {
+            window.localStorage.setItem(STORAGE_KEY_PROFILE, JSON.stringify(userProfile));
+          } catch {}
+
           const dbProducts = await supabaseService.getProducts(userProfile.id || user.id);
           if (dbProducts.length > 0) {
             setProducts(dbProducts);
+            try {
+              window.localStorage.setItem(STORAGE_KEY_PRODUCTS, JSON.stringify(dbProducts));
+            } catch {}
           }
           if (window.location.pathname.includes('dashboard')) {
             setCurrentRoute('dashboard');
@@ -454,28 +538,57 @@ export default function App() {
     notify(`Cupom ${code} copiado! Aplique no carrinho.`, 'success');
   };
 
-  const handleChangeTheme = (patch: Partial<ThemeConfig>) => {
-    setProfile((prev) => ({
-      ...prev,
-      themeConfig: {
-        ...prev.themeConfig,
-        ...patch,
-      },
-    }));
+  const handleChangeTheme = async (patch: Partial<ThemeConfig>) => {
+    const nextTheme: ThemeConfig = {
+      ...profile.themeConfig,
+      ...patch,
+    };
+    const updatedProfile: ProfileConfig = {
+      ...profile,
+      themeConfig: nextTheme,
+      banner_color: nextTheme.accentColor,
+    };
+
+    setProfile(updatedProfile);
+    try {
+      window.localStorage.setItem(STORAGE_KEY_PROFILE, JSON.stringify(updatedProfile));
+    } catch {}
+
+    // Auto-save no Supabase se for o criador logado
+    const targetId = updatedProfile.id || currentUser?.id;
+    if (currentUser && targetId && (targetId === currentUser.id || profile.id === currentUser.id)) {
+      try {
+        await supabaseService.updateProfile(targetId, updatedProfile);
+      } catch (e) {
+        console.warn('Erro ao salvar tema automaticamente:', e);
+      }
+    }
   };
 
-  const handleToggleCouponPreview = () => {
-    setProfile((prev) => {
-      const current = prev.coupon ?? { ...DEFAULT_COUPON_CONFIG };
-      return {
-        ...prev,
-        coupon: {
-          ...current,
-          enabled: !current.enabled,
-          code: current.code || DEFAULT_COUPON_CONFIG.code,
-        },
-      };
-    });
+  const handleToggleCouponPreview = async () => {
+    const current = profile.coupon ?? { ...DEFAULT_COUPON_CONFIG };
+    const updatedProfile: ProfileConfig = {
+      ...profile,
+      coupon: {
+        ...current,
+        enabled: !current.enabled,
+        code: current.code || DEFAULT_COUPON_CONFIG.code,
+      },
+    };
+
+    setProfile(updatedProfile);
+    try {
+      window.localStorage.setItem(STORAGE_KEY_PROFILE, JSON.stringify(updatedProfile));
+    } catch {}
+
+    const targetId = updatedProfile.id || currentUser?.id;
+    if (currentUser && targetId && (targetId === currentUser.id || profile.id === currentUser.id)) {
+      try {
+        await supabaseService.updateProfile(targetId, updatedProfile);
+      } catch (e) {
+        console.warn('Erro ao salvar cupom automaticamente:', e);
+      }
+    }
   };
 
   const handleProductOfferClick = (productId: string) => {
@@ -486,8 +599,9 @@ export default function App() {
 
   // Operações CRUD do Gerenciador conectadas ao Supabase
   const handleSaveProduct = async (product: Product, isEditing: boolean) => {
-    if (currentUser && profile.id) {
-      const res = await supabaseService.saveProduct(product, profile.id);
+    const targetId = profile.id || currentUser?.id;
+    if (currentUser && targetId) {
+      const res = await supabaseService.saveProduct(product, targetId);
       if (!res.success) {
         notify(res.error || 'Erro ao salvar produto no Supabase.', 'error');
         return;
@@ -498,10 +612,13 @@ export default function App() {
     }
 
     setProducts((prev) => {
-      if (isEditing) {
-        return prev.map((item) => (item.id === product.id ? product : item));
-      }
-      return [product, ...prev];
+      const updated = isEditing
+        ? prev.map((item) => (item.id === product.id ? product : item))
+        : [product, ...prev];
+      try {
+        window.localStorage.setItem(STORAGE_KEY_PRODUCTS, JSON.stringify(updated));
+      } catch {}
+      return updated;
     });
 
     notify(
@@ -513,10 +630,17 @@ export default function App() {
   };
 
   const handleDeleteProduct = async (productId: string) => {
-    if (currentUser && profile.id) {
+    const targetId = profile.id || currentUser?.id;
+    if (currentUser && targetId) {
       await supabaseService.deleteProduct(productId);
     }
-    setProducts((prev) => prev.filter((item) => item.id !== productId));
+    setProducts((prev) => {
+      const updated = prev.filter((item) => item.id !== productId);
+      try {
+        window.localStorage.setItem(STORAGE_KEY_PRODUCTS, JSON.stringify(updated));
+      } catch {}
+      return updated;
+    });
     setFavoriteIds((prev) => prev.filter((id) => id !== productId));
     notify('Produto removido da vitrine.');
   };
@@ -528,17 +652,35 @@ export default function App() {
       const next = [...prev];
       const [moved] = next.splice(index, 1);
       next.splice(targetIndex, 0, moved);
+      try {
+        window.localStorage.setItem(STORAGE_KEY_PRODUCTS, JSON.stringify(next));
+      } catch {}
       return next;
     });
   };
 
   const handleUpdateProfile = async (nextProfile: ProfileConfig) => {
-    setProfile(nextProfile);
-    if (currentUser && nextProfile.id) {
+    const targetId = nextProfile.id || currentUser?.id || profile.id;
+    const toSave: ProfileConfig = {
+      ...nextProfile,
+      id: targetId,
+    };
+
+    setProfile(toSave);
+    try {
+      window.localStorage.setItem(STORAGE_KEY_PROFILE, JSON.stringify(toSave));
+    } catch {}
+
+    if (currentUser && targetId) {
       try {
-        await supabaseService.updateProfile(nextProfile.id, nextProfile);
-        notify('Perfil e configurações salvos no Supabase!', 'success');
+        const saved = await supabaseService.updateProfile(targetId, toSave);
+        setProfile(saved);
+        try {
+          window.localStorage.setItem(STORAGE_KEY_PROFILE, JSON.stringify(saved));
+        } catch {}
+        notify('Perfil, tema e aparência salvos com sucesso no Supabase!', 'success');
       } catch (err: any) {
+        console.error('Erro ao salvar perfil no Supabase:', err);
         notify('Erro ao sincronizar com Supabase: ' + err.message, 'error');
       }
     } else {

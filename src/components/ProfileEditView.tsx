@@ -144,15 +144,22 @@ export function ProfileEditView({
     try {
       setIsSaving(true);
       const cleanSlug = slugInput.trim().toLowerCase().replace(/^@+/, '');
+      const targetId = draft.id || user?.id;
       const toPersist: ProfileConfig = {
         ...draft,
-        id: draft.id || user?.id,
+        id: targetId,
         handle: `@${cleanSlug}`,
         slug: cleanSlug,
         display_name: draft.display_name || cleanSlug,
       };
 
-      const saved = await supabaseService.upsertProfile(toPersist);
+      let saved: ProfileConfig;
+      if (targetId) {
+        saved = await supabaseService.updateProfile(targetId, toPersist);
+      } else {
+        saved = await supabaseService.upsertProfile(toPersist);
+      }
+
       onSave(saved);
       setSaveSuccess(true);
       setTimeout(() => setSaveSuccess(false), 2500);

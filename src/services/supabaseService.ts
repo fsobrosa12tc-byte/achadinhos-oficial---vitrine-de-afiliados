@@ -173,15 +173,42 @@ export const supabaseService = {
 
   // --- PERFIS & ONBOARDING ---
   async getProfileBySlug(slug: string): Promise<ProfileConfig | null> {
-    const cleanSlug = slug.replace(/^@+/, '').trim().toLowerCase();
+    const cleanSlug = decodeURIComponent(slug).replace(/^@+/, '').trim().toLowerCase();
+    if (!cleanSlug) return null;
+
     const { data, error } = await supabase
       .from('profiles')
       .select('*')
-      .eq('slug', cleanSlug)
+      .or(`slug.eq.${cleanSlug},slug.eq.@${cleanSlug}`)
       .maybeSingle();
 
     if (error || !data) return null;
     return mapDbProfileToConfig(data as DbProfileRow);
+  },
+
+  async getDefaultPublicProfile(): Promise<ProfileConfig | null> {
+    // 1. Tenta carregar o perfil da Andrezza pelo slug oficial
+    const andrezzaProfile = await this.getProfileBySlug('promosdaandrezza');
+    if (andrezzaProfile) return andrezzaProfile;
+
+    // 2. Fallback para perfil do email master
+    const { data: masterData } = await supabase
+      .from('profiles')
+      .select('*')
+      .eq('email', 'atendimentoandrezzaferraz@gmail.com')
+      .maybeSingle();
+    if (masterData) return mapDbProfileToConfig(masterData as DbProfileRow);
+
+    // 3. Fallback para a primeira vitrine cadastrada no banco
+    const { data: anyProfile } = await supabase
+      .from('profiles')
+      .select('*')
+      .order('created_at', { ascending: true })
+      .limit(1)
+      .maybeSingle();
+    if (anyProfile) return mapDbProfileToConfig(anyProfile as DbProfileRow);
+
+    return null;
   },
 
   async getProfileByUserId(userId: string): Promise<ProfileConfig | null> {
@@ -305,15 +332,20 @@ export const supabaseService = {
     return mapDbProfileToConfig(data as DbProfileRow);
   },
 
-  async updateProfile(profileId: string, profile: ProfileConfig): Promise<void> {
+  async updateProfile(profileId: string, profile: ProfileConfig): Promise<ProfileConfig> {
+    const bannerColor = profile.themeConfig?.accentColor || profile.banner_color || '#EE4D2D';
+    const themeMode = profile.themeConfig?.mode || 'light';
+    const layoutStyle = profile.themeConfig?.layoutStyle || 'grid';
+    const cleanSlug = (profile.slug || profile.handle || '').replace(/^@+/, '').trim().toLowerCase();
+
     const payload: Partial<DbProfileRow> = {
-      display_name: profile.display_name || profile.handle.replace(/^@/, ''),
-      bio: profile.bio,
-      avatar_url: profile.avatarUrl,
-      banner_color: profile.themeConfig.accentColor,
-      theme_mode: profile.themeConfig.mode,
-      layout_style: profile.themeConfig.layoutStyle,
-      social_links: profile.socials,
+      display_name: profile.display_name || cleanSlug,
+      bio: profile.bio || '',
+      avatar_url: profile.avatarUrl || '',
+      banner_color: bannerColor,
+      theme_mode: themeMode,
+      layout_style: layoutStyle,
+      social_links: profile.socials || [],
       whatsapp_vip_url: profile.whatsapp_vip_url || null,
       pixel_meta: profile.pixel_meta || null,
       pixel_tiktok: profile.pixel_tiktok || null,
@@ -321,28 +353,39 @@ export const supabaseService = {
       updated_at: new Date().toISOString(),
     };
 
-    const { error } = await supabase
+    const { data, error } = await supabase
       .from('profiles')
       .update(payload)
-      .eq('id', profileId);
+      .eq('id', profileId)
+      .select()
+      .single();
 
-    if (error) throw error;
+    if (error) {
+      console.warn('Erro ao atualizar perfil no Supabase, tentando upsert:', error);
+      return this.upsertProfile({ ...profile, id: profileId });
+    }
+
+    return mapDbProfileToConfig(data as DbProfileRow);
   },
 
   async upsertProfile(profile: ProfileConfig): Promise<ProfileConfig> {
     if (!profile.id) throw new Error('ID do usuário é obrigatório para salvar perfil');
 
-    const cleanSlug = profile.handle.replace(/^@+/, '').trim().toLowerCase();
+    const cleanSlug = (profile.slug || profile.handle || '').replace(/^@+/, '').trim().toLowerCase();
+    const bannerColor = profile.themeConfig?.accentColor || profile.banner_color || '#EE4D2D';
+    const themeMode = profile.themeConfig?.mode || 'light';
+    const layoutStyle = profile.themeConfig?.layoutStyle || 'grid';
+
     const payload: Partial<DbProfileRow> = {
       id: profile.id,
       slug: cleanSlug,
       display_name: profile.display_name || cleanSlug,
       bio: profile.bio || '',
       avatar_url: profile.avatarUrl || '',
-      banner_color: profile.themeConfig.accentColor,
-      theme_mode: profile.themeConfig.mode,
-      layout_style: profile.themeConfig.layoutStyle,
-      social_links: profile.socials,
+      banner_color: bannerColor,
+      theme_mode: themeMode,
+      layout_style: layoutStyle,
+      social_links: profile.socials || [],
       whatsapp_vip_url: profile.whatsapp_vip_url || null,
       pixel_meta: profile.pixel_meta || null,
       pixel_tiktok: profile.pixel_tiktok || null,
@@ -375,26 +418,47 @@ export const supabaseService = {
 
   // --- PRODUTOS & CATEGORIAS ---
   async getProducts(profileId: string, onlyActive = false): Promise<Product[]> {
-    let query = supabase
-      .from('products')
-      .select('*, categories(name)')
-      .eq('profile_id', profileId);
+    try {
+      let query = supabase
+        .from('products')
+        .select('*, categories(name)')
+        .eq('profile_id', profileId);
 
-    if (onlyActive) {
-      query = query.eq('active', true);
-    }
+      if (onlyActive) {
+        query = query.neq('active', false);
+      }
 
-    query = query.order('created_at', { ascending: false });
+      query = query.order('created_at', { ascending: false });
 
-    const { data, error } = await query;
-    if (error) {
-      console.error('Erro ao buscar produtos:', error);
+      const { data, error } = await query;
+      if (error) {
+        console.warn('Erro com join categories(name), executando select direto:', error);
+        let fallbackQuery = supabase
+          .from('products')
+          .select('*')
+          .eq('profile_id', profileId);
+
+        if (onlyActive) {
+          fallbackQuery = fallbackQuery.neq('active', false);
+        }
+
+        const fallback = await fallbackQuery.order('created_at', { ascending: false });
+
+        if (fallback.error || !fallback.data) {
+          console.error('Erro definitivo ao buscar produtos no Supabase:', fallback.error);
+          return [];
+        }
+
+        return fallback.data.map((row: any) => mapDbProductToProduct(row as DbProductRow));
+      }
+
+      return (data || []).map((row: any) =>
+        mapDbProductToProduct(row as DbProductRow, row.categories?.name)
+      );
+    } catch (err) {
+      console.error('Exceção ao buscar produtos:', err);
       return [];
     }
-
-    return (data || []).map((row: any) =>
-      mapDbProductToProduct(row as DbProductRow, row.categories?.name)
-    );
   },
 
   async saveProduct(

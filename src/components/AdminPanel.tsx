@@ -316,6 +316,7 @@ export function AdminPanel({
     const currentCoupon = profileDraft.coupon ?? DEFAULT_COUPON_CONFIG;
     onUpdateProfile({
       ...profileDraft,
+      id: profileDraft.id || profile.id,
       handle: cleanedHandle.startsWith('@')
         ? cleanedHandle
         : `@${cleanedHandle}`,
